@@ -1,0 +1,4 @@
+interface:
+  display_name: "X to Obsidian / X 内容入库"
+  short_description: "Save X posts and articles for local AI notes"
+  default_prompt: "Use $x-to-obsidian to save this X post into my Obsidian vault with its actual content."
