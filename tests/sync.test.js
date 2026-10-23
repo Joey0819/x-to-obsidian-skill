@@ -7,6 +7,7 @@ const os = require("node:os");
 const path = require("node:path");
 const { spawnSync } = require("node:child_process");
 const sync = require("../scripts/sync-x-to-obsidian.js");
+const { capture } = require("../scripts/desktop-capture.js");
 
 const URL = "https://x.com/example/status/1234567890";
 const BODY = "Use small notes and connect related ideas. Keep an independent backup of your vault.";
@@ -167,4 +168,27 @@ test("article atomic entities use their DraftJS key rather than array position",
     ],
   });
   assert.equal(markdown, "```\nexample code\n```");
+});
+
+test("desktop capture reports saved/incomplete state and repairs an incomplete note automatically", async () => {
+  await withVault(async ({ vault, args, setTweet }) => {
+    setTweet(articleTweet(false));
+    const incomplete = await capture({ ...args, url: URL });
+    assert.equal(incomplete.status, "incomplete");
+    setTweet(articleTweet());
+    const repaired = await capture({ ...args, url: URL });
+    assert.equal(repaired.status, "saved");
+    assert.equal(repaired.note, incomplete.note);
+    assert.ok(fs.readFileSync(path.join(vault, repaired.note), "utf8").includes(BODY));
+  });
+});
+
+test("desktop capture adds a requested summary to an existing saved note", async () => {
+  await withVault(async ({ vault, args, requests }) => {
+    await capture({ ...args, url: URL });
+    const result = await capture({ ...args, url: URL, summarize: true });
+    assert.equal(result.status, "saved");
+    assert.equal(result.hasSummary, true);
+    assert.ok(requests.some(r => r.url.includes("localhost:11434")));
+  });
 });

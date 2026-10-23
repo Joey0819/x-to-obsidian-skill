@@ -1,11 +1,24 @@
 ---
 name: x-to-obsidian
-description: "Save public X/Twitter posts and X Articles as Obsidian notes with actual text, optional local Ollama summaries, and duplicate control. Use for X-to-Obsidian capture, refreshing URL-only imports, or troubleshooting Copilot summaries of these notes."
+description: "Save public X/Twitter posts and X Articles into Obsidian, including a macOS app and browser bookmark for capture without Terminal, optional local Ollama summaries, and safe refresh. Use to save X content, set up one-click capture, or troubleshoot imported notes."
 ---
 
 # X to Obsidian / X 内容入库
 
 Capture the actual post or article content into Markdown so the user's local LLM can summarize it and help develop original notes. A saved URL or article preview alone does not satisfy a request for the article body.
+
+## Capture Without Terminal / 免终端保存
+
+For a user who wants a direct X-to-Obsidian action, use the bundled macOS companion app and bookmark. Do the build/install work yourself; do not ask the user to type routine commands.
+
+- Check `~/Applications/X to Obsidian.app`. For initial setup or a source update, run `node scripts/build-macos.js --install` from this skill folder. This builds and installs the actual native app; Node.js and the Xcode command line tools must be present for the build. The installed app needs Node.js, but not a running Codex session.
+- Open the app. It defaults to the existing `~/Documents/Obsidian Vault`; the user can choose another vault, paste a post link, or use **Current Chrome Post**. Optional local summary/model and refresh controls are in the app.
+- Open **Set Up Browser Button** in the app, or open `desktop/bookmark.html`. The user drags **Save to Obsidian** onto the browser bookmarks bar once. On an X post, clicking that bookmark sends only the post URL to the app, saves content, and opens Obsidian. The first browser-to-app handoff may show an Open App prompt.
+- Validate the installed app handoff as well as the importer. If browser-control tools are unavailable, distinguish automated bookmark checks from an actual click in the user's browser. Do not alter Chrome's bookmark files while Chrome is running to fake installation.
+
+The browser action uses `x2obsidian://save?url=...`. Incoming links cannot select another vault, enable summarization, or pass arbitrary command arguments. The app processes captures serially and automatically retries saved incomplete notes. It does not monitor the browser or synchronize all bookmarks. Private content and unsupported standalone X apps still require an accessible shared post URL.
+
+For packaging and developer checks, read [references/desktop.md](references/desktop.md). Ordinary capture does not require reading that reference.
 
 ## Run the Importer / 运行导入工具
 
@@ -27,7 +40,7 @@ node scripts/sync-x-to-obsidian.js --vault "/path/to/vault" --clipboard --open
 node scripts/sync-x-to-obsidian.js --vault "/path/to/vault" --file "/path/to/urls.txt"
 ```
 
-`--current`, `--clipboard`, and `--open` require macOS. Explicit URL/file capture works without browser access. A standalone X app is supported only when its post URL is exposed to Chrome automation; otherwise obtain the post's shared URL.
+`--current`, `--clipboard`, and `--open` require macOS. Explicit URL/file capture works without browser access. A standalone X app is supported only when its post URL is exposed to Chrome automation; otherwise obtain the post's shared URL. These commands are fallbacks for automation, not the preferred daily user interaction when the desktop app is installed.
 
 ## Refresh and Summarize / 刷新与总结
 

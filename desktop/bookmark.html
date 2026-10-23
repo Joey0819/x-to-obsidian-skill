@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="zh-CN">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>X to Obsidian · 一键保存</title>
+<style>
+  :root { color-scheme: light dark; font-family: -apple-system, BlinkMacSystemFont, sans-serif; }
+  body { max-width: 720px; margin: 10vh auto; padding: 0 24px; line-height: 1.7; }
+  h1 { line-height: 1.25; font-size: 38px; letter-spacing: -.04em; }
+  p, li { color: light-dark(#4b5260, #bdc4d0); }
+  .button { display: inline-block; padding: 12px 24px; margin: 16px 0; background: #6344c5; color: white; border-radius: 12px; text-decoration: none; font-weight: 600; }
+  .en { display: block; font-size: 14px; color: light-dark(#69717e, #9ba6b4); }
+  .hint { border: 1px solid light-dark(#ddd, #444); border-radius: 14px; padding: 18px 24px; }
+</style>
+<h1>从 X 到你的知识库<br><span style="font-weight:400">One click to Obsidian.</span></h1>
+<p>把下面的按钮拖到浏览器书签栏，只需设置一次。之后在任意 X 帖子详情页点击它，即可保存正文并打开 Obsidian。</p>
+<p class="en">Drag the button into your browser's bookmarks bar once. On an X post, click that bookmark to save the content and open Obsidian.</p>
+<a class="button" id="save-bookmark" draggable="true">保存到 Obsidian / Save to Obsidian</a>
+<div class="hint">
+  <ol>
+    <li>显示 Chrome 书签栏：按 Command + Shift + B。<span class="en">Show Chrome's bookmarks bar with Command + Shift + B.</span></li>
+    <li>将紫色按钮拖到书签栏。<span class="en">Drag the purple button onto the bookmarks bar.</span></li>
+    <li>在 X 打开具体帖子，点击书签；首次提示时允许打开 X to Obsidian。<span class="en">Open a specific X post and click the bookmark. Allow the app to open when prompted the first time.</span></li>
+  </ol>
+</div>
+<p>也可以打开 “X to Obsidian” 应用并粘贴帖子链接。不需要终端命令。<span class="en">You can also paste a post link into the X to Obsidian app. No Terminal commands are needed.</span></p>
+<script>
+  const bookmarklet = function () {
+    if (!['x.com', 'www.x.com', 'twitter.com', 'www.twitter.com'].includes(location.hostname) || !/^\/[A-Za-z0-9_]+\/status(?:es)?\/\d+/.test(location.pathname)) {
+      alert('请先打开具体 X 帖子 / Open a specific X post first.');
+      return;
+    }
+    location.href = 'x2obsidian://save?url=' + encodeURIComponent(location.href);
+  };
+  document.getElementById('save-bookmark').href = 'javascript:(' + bookmarklet.toString() + ')();';
+</script>
+</html>

@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+  <key>CFBundleName</key><string>X to Obsidian</string>
+  <key>CFBundleDisplayName</key><string>X to Obsidian</string>
+  <key>CFBundleIdentifier</key><string>com.joey0819.x-to-obsidian</string>
+  <key>CFBundleExecutable</key><string>XToObsidian</string>
+  <key>CFBundlePackageType</key><string>APPL</string>
+  <key>CFBundleShortVersionString</key><string>1.1.0</string>
+  <key>CFBundleVersion</key><string>2</string>
+  <key>LSMinimumSystemVersion</key><string>12.0</string>
+  <key>NSHighResolutionCapable</key><true/>
+  <key>NSAppleEventsUsageDescription</key><string>Read the current X post link in Chrome when you choose Save Current Chrome Post / 点击保存当前 Chrome 帖子时读取帖子链接。</string>
+  <key>CFBundleURLTypes</key><array><dict>
+    <key>CFBundleURLName</key><string>X to Obsidian Capture</string>
+    <key>CFBundleURLSchemes</key><array><string>x2obsidian</string></array>
+  </dict></array>
+</dict></plist>

@@ -4,6 +4,18 @@ Save public X/Twitter posts and X Articles as readable Obsidian Markdown for loc
 
 将公开 X 帖子和长文章保存为可阅读的 Obsidian 笔记，供本地模型总结并辅助后续写作。
 
+## Daily Use Without Terminal / 日常使用无需终端
+
+1. Open **X to Obsidian** from your Applications folder. The app is installed at `~/Applications/X to Obsidian.app` on the configured Mac.
+2. Click **Set Up Browser Button** and drag **Save to Obsidian** into the browser bookmarks bar once.
+3. Open a specific X post and click that bookmark. Its actual content is saved and the note opens in Obsidian. Allow the browser to open the app on the first handoff.
+
+打开应用 → 设置一次浏览器书签 → 在 X 帖子页点击“保存到 Obsidian”。之后无需在终端输入命令。也可在应用中直接粘贴帖子链接，或选择“当前 Chrome 帖子”。
+
+The app lets you choose an existing vault, enable a local Ollama summary, and refresh saved content. Incomplete saved notes are retried automatically. The bookmark sends only the current post URL; it does not read account cookies or synchronize every X bookmark.
+
+应用可以选择仓库、开启本地摘要、刷新已有内容；已有不完整笔记会自动重试。浏览器书签只发送当前帖子链接，不读取账号 Cookie，也不自动同步全部收藏。
+
 ## Install / 安装
 
 Clone this repository into your personal skills directory:
@@ -16,7 +28,11 @@ The repository is private; access is required. If the folder already exists, upd
 
 仓库为私有，需要访问权限。若目录已存在，请更新已有仓库。技能列表未刷新时，重新打开 Codex 会话。
 
-Invoke `$x-to-obsidian`, or run the helper directly with Node.js 18+:
+Ask Codex to use `$x-to-obsidian` and set up the desktop app. It can build/install the app for you on macOS. For developer setup, see [desktop build instructions](references/desktop.md).
+
+请让 Codex 使用 `$x-to-obsidian` 并完成桌面应用安装。日常操作使用书签或应用按钮即可。
+
+The CLI remains available for automation with Node.js 18+:
 
 ```bash
 node scripts/sync-x-to-obsidian.js --vault "/path/to/Obsidian Vault" --url "https://x.com/author/status/1234567890" --open
@@ -24,13 +40,15 @@ node scripts/sync-x-to-obsidian.js --vault "/path/to/Obsidian Vault" --url "http
 
 ## Frontend and UI / 前端与界面
 
-Open a specific X post in Chrome, then run `bash scripts/x2obsidian`. With no arguments this reads the current Chrome post and opens the note in Obsidian on macOS. Clipboard capture uses `--clipboard`; batch capture uses `--file urls.txt`. When the X app is not exposed through Chrome automation, pass the shared post URL explicitly.
+The primary UI is a native macOS app plus a browser bookmark. It supports direct link capture, current Chrome post capture, a vault picker, local summary settings, and clear saved/incomplete/error states. A native X app can use the copy-link-and-paste path.
 
-在 Chrome 中打开具体帖子，再运行 `bash scripts/x2obsidian`。macOS 下无参数运行会读取当前帖子并在 Obsidian 打开笔记。X 独立应用无法通过 Chrome 读取时，使用 `--url` 指定分享链接。
+前端为 macOS 原生应用和浏览器书签，包含粘贴链接、当前 Chrome 帖子、仓库选择、本地摘要及状态反馈。独立 X 应用可复制帖子链接后粘贴保存。
 
 ## Backend / 后台
 
 - `scripts/sync-x-to-obsidian.js`: importer; no npm dependencies or user X API key.
+- `scripts/desktop-capture.js`: structured result bridge used by the app.
+- `desktop/`: native application source and browser bookmark setup page.
 - Source chain: official X oEmbed, third-party FxTwitter, then best-effort public X web fallback for missing content.
 - `X2OBSIDIAN_VAULT` or `--vault`: existing destination vault; default `~/Documents/Obsidian Vault`.
 - `--refresh`: refresh a captured note with a backup and preserved `My Notes`.
@@ -53,9 +71,11 @@ Public sources can fail or change. Private, deleted, restricted, paid, or login-
 
 ```bash
 node --check scripts/sync-x-to-obsidian.js
-node --test tests/sync.test.js
+node --test tests/*.test.js
+bash tests/verify-macos.sh
+node scripts/build-macos.js --install
 ```
 
-The tests use synthetic responses and a temporary vault, including article-body capture, duplicate prevention, safe refresh, URL-only failure reporting, and local-summary input. No personal vault or network access is needed for tests. This project is a skill with a CLI; it has no packaged desktop app to rebuild.
+The tests use synthetic responses and a temporary vault, including article-body capture, duplicate prevention, safe refresh, URL-only failure reporting, local-summary input, and browser-to-app handoff. Native checks validate URL events and app code. Rebuild and reinstall the actual packaged app after source changes; the build also checks its window layout. Generated binaries and local user data are excluded from Git.
 
-测试使用合成响应和临时仓库，不读取个人笔记，不需要网络。该项目是技能和命令行工具，不含需要重新构建的桌面应用。
+测试使用合成响应和临时仓库，不读取个人笔记，不需要网络。更新源码后需重新构建并安装实际应用；构建过程也验证窗口布局。生成的二进制文件和个人数据不会提交到 Git。

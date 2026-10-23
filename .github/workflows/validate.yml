@@ -17,4 +17,10 @@ jobs:
           node-version: '20'
       - run: node --check scripts/sync-x-to-obsidian.js
       - run: bash -n scripts/x2obsidian
-      - run: node --test tests/sync.test.js
+      - run: node --check scripts/desktop-capture.js
+      - run: node --test tests/*.test.js
+  macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: bash tests/verify-macos.sh

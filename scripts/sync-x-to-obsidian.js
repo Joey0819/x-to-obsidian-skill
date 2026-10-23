@@ -986,4 +986,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { parseArgs, normalizeXUrl, articleBlocksToMarkdown, extractArticle, contentStatus, buildNote, syncOne, incompleteNoteUrls };
+module.exports = { parseArgs, normalizeXUrl, articleBlocksToMarkdown, extractArticle, contentStatus, existingContentStatus, currentXUrlsFromChrome, buildNote, syncOne, incompleteNoteUrls };
