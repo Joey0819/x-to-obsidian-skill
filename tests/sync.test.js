@@ -8,6 +8,7 @@ const path = require("node:path");
 const { spawnSync } = require("node:child_process");
 const sync = require("../scripts/sync-x-to-obsidian.js");
 const { capture } = require("../scripts/desktop-capture.js");
+const { parseTranscript } = require("../scripts/media-text.js");
 
 const URL = "https://x.com/example/status/1234567890";
 const BODY = "Use small notes and connect related ideas. Keep an independent backup of your vault.";
@@ -33,7 +34,6 @@ async function withVault(run) {
   const originalFetch = global.fetch;
   const requests = [];
   let tweet = articleTweet();
-  let conversation;
   const extras = new Map();
   let summaryFailure = false;
   global.fetch = async (url, options = {}) => {
@@ -45,9 +45,6 @@ async function withVault(run) {
       }));
     }
     if (extras.has(String(url))) return extras.get(String(url))();
-    if (String(url).startsWith("https://api.fxtwitter.com/2/conversation/")) {
-      return new Response(JSON.stringify(conversation || { error: "Unavailable" }), { status: conversation ? 200 : 503 });
-    }
     if (String(url).startsWith("https://api.fxtwitter.com/")) {
       if (tweet === null) return new Response("Unavailable", { status: 503 });
       return new Response(JSON.stringify({ tweet }));
@@ -64,7 +61,6 @@ async function withVault(run) {
       requests,
       args: { vault, refresh: false, summarize: false, open: false, model: "test-model" },
       setTweet(value) { tweet = value; },
-      setConversation(value) { conversation = value; },
       respond(url, handler) { extras.set(url, handler); },
       failSummary() { summaryFailure = true; },
     });
@@ -214,53 +210,59 @@ test("article images are placed inline, archived offline, and reused on refresh"
     tweet.article.content.entityMap = [{ key: "7", value: { type: "MEDIA", data: { mediaItems: [{ mediaId: "42" }] } } }];
     setTweet(tweet);
     respond(IMAGE, () => new Response(png, { headers: { "content-type": "image/png" } }));
-    const result = await capture({ ...args, url: URL });
+    const ocr = async (_, files) => files.map(file => ({ file, kind: "image", status: "ok", text: "Diagram text" }));
+    const result = await capture({ ...args, url: URL }, ocr);
     const file = path.join(vault, result.note);
     const note = fs.readFileSync(file, "utf8");
     const match = note.match(/!\[\[(X\/Attachments\/1234567890\/[^\]]+\.png)\]\]/);
     assert.ok(match);
     assert.ok(note.indexOf(BODY) < match.index && match.index < note.indexOf("After the diagram."));
     assert.ok(note.includes("Alt text: A diagram"));
+    assert.match(note, /## Image Text \(OCR\)[\s\S]*Diagram text/);
     assert.deepEqual(fs.readFileSync(path.join(vault, match[1])), png);
     assert.equal(result.attachmentCount, 1);
     assert.equal(result.attachmentMissing, 0);
-    await capture({ ...args, url: URL, refresh: true });
+    await capture({ ...args, url: URL, refresh: true }, ocr);
     assert.equal(requests.filter(r => r.url === IMAGE).length, 1);
     delete tweet.article.media_entities;
     const before = fs.readFileSync(file, "utf8");
-    await assert.rejects(capture({ ...args, url: URL, refresh: true }), /less media or context/);
+    await assert.rejects(capture({ ...args, url: URL, refresh: true }, ocr), /less attached media/);
     assert.equal(fs.readFileSync(file, "utf8"), before);
   });
 });
 
-test("archives image-only posts and saves quote, thread, first-page replies, and MP4", async () => {
-  await withVault(async ({ vault, args, setTweet, setConversation, respond }) => {
+test("saves only the target post and passes OCR and video text into Ollama", async () => {
+  await withVault(async ({ vault, args, requests, setTweet, respond }) => {
     const root = {
       id: "1234567890", author: { name: "Example Author" }, replies: 5, replying_to_status: "31",
-      media: { all: [{ type: "photo", url: IMAGE }], photos: [{ type: "photo", url: IMAGE }] },
-      quote: { id: "32", text: "Quote body.", author: { name: "Quote author" },
-        media: { videos: [{ type: "video", url: VIDEO, formats: [
+      media: { all: [{ type: "photo", url: IMAGE }], photos: [{ type: "photo", url: IMAGE }],
+        videos: [{ type: "video", url: VIDEO, formats: [
           { url: VIDEO, container: "mp4", bitrate: 200000 },
           { url: VIDEO + "?quality=hd", container: "mp4", bitrate: 2176000 },
           { url: VIDEO + "?quality=4k", container: "mp4", bitrate: 25000000 },
-        ] }] } },
+        ] }] },
+      quote: { id: "32", text: "Private fixture quote body.", media: { photos: [{ url: "https://pbs.twimg.com/media/quoted.jpg" }] } },
       raw_text: { text: "", facets: [{ type: "url", expanded_url: "https://example.org/linked" }] },
     };
     setTweet(root);
-    setConversation({ status: root, thread: [{ id: "31", text: "Parent body." }, root],
-      replies: [{ id: "33", text: "Reply body." }], cursor: { bottom: "next" } });
     respond(IMAGE, () => new Response(Buffer.from("89504e470d0a1a0a", "hex"), { headers: { "content-type": "image/png" } }));
     respond(VIDEO + "?quality=hd", () => new Response(null, { status: 503 }));
     respond(VIDEO, () => new Response(Buffer.from("00000018667479706d703432", "hex"), { headers: { "content-type": "video/mp4" } }));
-    const result = await capture({ ...args, url: URL });
+    const analysis = async (_, files) => files.map(file => file.endsWith(".mp4")
+      ? { file, kind: "video", status: "ok", segments: [{ at: "01:05", text: "The video explains calibration." }] }
+      : { file, kind: "image", status: "ok", text: "Calibrate the camera." });
+    const result = await capture({ ...args, url: URL, summarize: true }, analysis);
     const note = fs.readFileSync(path.join(vault, result.note), "utf8");
     assert.equal(result.status, "saved");
     assert.equal(result.attachmentCount, 2);
-    assert.equal(result.contextCount, 3);
-    assert.match(note, /Quoted post: Quote author[\s\S]*Quote body[\s\S]*\.mp4\]\]/);
-    assert.match(note, /Thread context:[\s\S]*Parent body\./);
-    assert.match(note, /Public reply:[\s\S]*Reply body\./);
-    assert.match(note, /Bounded snapshot/);
+    assert.equal(result.imageTextCount, 1);
+    assert.equal(result.transcriptCount, 1);
+    assert.match(note, /## Video Transcripts[\s\S]*01:05[\s\S]*The video explains calibration\./);
+    assert.doesNotMatch(note, /Quote body|Conversation Context/);
+    assert.ok(!requests.some(r => /conversation|quoted.jpg/.test(r.url)));
+    const prompt = JSON.parse(requests.find(r => r.url.endsWith("/api/chat")).options.body).messages[1].content;
+    assert.match(prompt, /Calibrate the camera/);
+    assert.match(prompt, /The video explains calibration/);
     assert.match(note, /https:\/\/example\.org\/linked/);
   });
 });
@@ -279,16 +281,43 @@ test("blocks off-CDN redirects, rejects mislabeled binaries, and keeps source li
   });
 });
 
-test("first re-save upgrades an older note in place and keeps My Notes", async () => {
+test("first re-save removes legacy conversation, retains the backup and keeps My Notes", async () => {
   await withVault(async ({ vault, args }) => {
     const first = await capture({ ...args, url: URL });
     const filepath = path.join(vault, first.note);
-    const old = fs.readFileSync(filepath, "utf8").replace(/^archive_version: 2\n/m, "")
+    const old = fs.readFileSync(filepath, "utf8").replace(/^archive_version: 3\n/m, "archive_version: 2\ncontext_posts: 1\n")
+      .replace("## Metadata", "## Conversation Context\n\nOld context\n\n![[X/Attachments/1234567890/" + "a".repeat(24) + ".mp4]]\n\n## Metadata")
       .replace(/## My Notes[\s\S]*$/, "## My Notes\n\nMy notes stay here.\n");
     fs.writeFileSync(filepath, old);
     const upgraded = await capture({ ...args, url: URL });
     assert.equal(upgraded.note, first.note);
-    assert.equal(upgraded.archiveVersion, 2);
-    assert.match(fs.readFileSync(filepath, "utf8"), /My notes stay here\./);
+    assert.equal(upgraded.archiveVersion, 3);
+    const upgradedNote = fs.readFileSync(filepath, "utf8");
+    assert.match(upgradedNote, /My notes stay here\./);
+    assert.doesNotMatch(upgradedNote, /Old context|Conversation Context/);
+    const backups = path.join(vault, "X", ".x-sync-backups");
+    assert.equal(fs.readFileSync(path.join(backups, fs.readdirSync(backups)[0]), "utf8"), old);
+  });
+});
+
+test("Whisper output uses timestamped text and skips non-speech placeholders", () => {
+  assert.deepEqual(parseTranscript({ transcription: [
+    { offsets: { from: 250 }, text: " [BLANK_AUDIO] " },
+    { offsets: { from: 65000 }, text: " Camera   calibration. " },
+  ] }), [{ at: "01:05", text: "Camera calibration." }]);
+  assert.throws(() => parseTranscript({}), /Invalid Whisper JSON/);
+});
+
+test("keeps the note when an extraction retries with less text", async () => {
+  await withVault(async ({ vault, args, setTweet, respond }) => {
+    setTweet({ text: BODY, media: { photos: [{ url: IMAGE }] } });
+    respond(IMAGE, () => new Response(Buffer.from("89504e470d0a1a0a", "hex"), { headers: { "content-type": "image/png" } }));
+    const good = async (_, files) => files.map(file => ({ file, kind: "image", status: "ok", text: "Existing OCR." }));
+    const failed = async (_, files) => files.map(file => ({ file, kind: "image", status: "unavailable", reason: "fixture" }));
+    const result = await capture({ ...args, url: URL }, good);
+    const file = path.join(vault, result.note);
+    const original = fs.readFileSync(file, "utf8");
+    await assert.rejects(capture({ ...args, url: URL, refresh: true }, failed), /less extracted media text/);
+    assert.equal(fs.readFileSync(file, "utf8"), original);
   });
 });

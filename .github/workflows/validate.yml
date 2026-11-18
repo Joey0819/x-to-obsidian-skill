@@ -17,7 +17,9 @@ jobs:
           node-version: '20'
       - run: node --check scripts/sync-x-to-obsidian.js
       - run: bash -n scripts/x2obsidian
+      - run: bash -n scripts/setup-local-transcription.sh
       - run: node --check scripts/desktop-capture.js
+      - run: node --check scripts/media-text.js
       - run: node --test tests/*.test.js
   macos:
     runs-on: macos-latest

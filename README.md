@@ -53,17 +53,26 @@ The primary UI is a native macOS app plus a browser bookmark. It supports direct
 - `X2OBSIDIAN_VAULT` or `--vault`: existing destination vault; default `~/Documents/Obsidian Vault`.
 - `--refresh`: refresh a captured note with a backup and preserved `My Notes`.
 - `--refresh-incomplete`: retry saved URL-only or preview-only notes.
-- `--summarize --model NAME`: use installed local Ollama at `localhost:11434`. The default is `X2OBSIDIAN_MODEL` or `gemma4:26b`.
+- `--summarize --model NAME`: use installed local Ollama at `localhost:11434`. The default is `X2OBSIDIAN_MODEL` or `gemma4:31b`.
 
 不需要 npm 依赖或个人 X API key。数据源依次为官方 oEmbed、第三方 FxTwitter 和尽力而为的 X 公开网页接口。刷新前保留备份和 `My Notes`；总结使用已安装的本地 Ollama 模型。
 
 ## Output and Limits / 输出与边界
 
-Notes go to `X/Tweets/`; offline attachments go to `X/Attachments/<post-id>/`. The note embeds post photos, article cover and inline images, and supported X-hosted videos/GIFs. It also records linked URLs, poll results, quoted posts, and available thread context plus the first page of public replies (at most 20 related posts). Unsupported, oversized, or unavailable media keep a source link instead. Vault sync to another device must include the attachment folder as well as the notes.
+Notes go to `X/Tweets/`; offline attachments go to `X/Attachments/<post-id>/`. The note embeds the selected post's photos, article cover and inline images, and supported X-hosted videos/GIFs. It does not import quoted-post bodies, threads, or replies. Unsupported, oversized, or unavailable media keep a source link instead. Vault sync to another device must include the attachment folder as well as the notes.
 
-This is a bounded capture, not an account or full-thread mirror. Private or removed content, later reply pages, external pages, streaming-only media, image OCR, and video transcription are not archived. Downloads are limited to 64 MiB per file, 48 attachments and 192 MiB of new downloads per capture.
+**Image Text (OCR)** and **Video Transcripts** are Markdown sections in the same note. Apple Vision reads images on macOS, including the first frame of an animated GIF. FFmpeg and whisper.cpp transcribe the first audio track of a local MP4 with timestamps in the original language. Silent videos are marked as such; this does not read on-screen text from videos. Local summaries include the extracted text automatically. Recognition may miss or misread source content.
 
-Re-save an older note to upgrade it in place. The importer preserves `My Notes` and the original capture time, keeps a backup, and rejects refreshes that lose the article or drop saved attachments. A local summary appears above the full article and is based on the captured text. The inbox is `X/Inbox/X Inbox.md`; duplicate tracking is `X/.x-sync-index.json`.
+For a new Mac, install the transcription dependencies once and download the checksum-verified multilingual model, outside the vault:
+
+```bash
+brew install ffmpeg whisper.cpp
+bash scripts/setup-local-transcription.sh
+```
+
+`X2OBSIDIAN_WHISPER_MODEL` can point to an existing compatible GGML model. Extraction requires no API key or cloud upload. The importer keeps the note and attachments if local extraction is unavailable. Transcription is limited to videos up to 30 minutes; downloads are limited to 64 MiB per file, 48 attachments and 192 MiB of new downloads per capture. Private or removed content, external pages, and streaming-only media are not archived.
+
+Re-save an older note to upgrade it in place or use **Refresh existing content** to retry extraction. The importer preserves `My Notes` and the original capture time, keeps a backup, and rejects refreshes that lose the article, primary attachments, or previously extracted text. Legacy conversation sections are removed on upgrade, but their files are not deleted. The inbox is `X/Inbox/X Inbox.md`; duplicate tracking is `X/.x-sync-index.json`.
 
 笔记保存到 `X/Tweets/`，入口列表和去重索引同步更新。摘要置于正文前。媒体保留远程链接，不自动下载、OCR 或转写。内容不完整会明确提示，刷新不会用不完整内容覆盖已有全文。
 

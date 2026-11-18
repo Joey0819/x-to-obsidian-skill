@@ -28,7 +28,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         buildWindow()
         if CommandLine.arguments.contains("--check-ui") {
-            detailLabel.stringValue = "35 attachments · 20 related posts · 1 not archived\nX/Tweets/example.md"
+            detailLabel.stringValue = "7 attachments · 6 images with text · 1 transcript · 1 unavailable\nX/Tweets/example.md"
             window.contentView!.layoutSubtreeIfNeeded()
             let frame = detailLabel.convert(detailLabel.bounds, to: window.contentView!)
             let fits = frame.minY >= 12 && frame.maxX <= window.contentView!.bounds.width - 12
@@ -107,7 +107,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         summaryCheck.state = settings.bool(forKey: "summarize") ? .on : .off
         stack.addArrangedSubview(summaryCheck)
         modelField.placeholderString = "Local Ollama model"
-        modelField.stringValue = settings.string(forKey: "model") ?? ProcessInfo.processInfo.environment["X2OBSIDIAN_MODEL"] ?? "gemma4:26b"
+        modelField.stringValue = settings.string(forKey: "model") ?? ProcessInfo.processInfo.environment["X2OBSIDIAN_MODEL"] ?? "gemma4:31b"
         addField(label: "摘要模型 / Summary model", field: modelField, to: stack)
         stack.addArrangedSubview(refreshCheck)
 
@@ -202,9 +202,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         saveButton.isEnabled = false
         currentButton.isEnabled = false
         spinner.startAnimation(nil)
-        statusLabel.stringValue = "正在保存正文、附件和上下文… / Saving content, media and context…"
+        statusLabel.stringValue = "正在保存正文并提取媒体文字… / Saving post and extracting media text…"
         statusLabel.textColor = .labelColor
-        detailLabel.stringValue = ""
+        detailLabel.stringValue = "首次保存时请留意 macOS 文件访问提示 / On first save, check for a macOS file-access prompt."
         var arguments = [script.path, "--vault", request.vault, "--model", request.model]
         if ProcessInfo.processInfo.environment["X2OBSIDIAN_OPEN_NOTE"] != "0" { arguments.append("--open") }
         if let link = request.link { arguments += ["--url", link] } else { arguments.append("--current") }
@@ -244,15 +244,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         case "saved":
             let attachments = result["attachmentCount"] as? Int ?? 0
             let missing = result["attachmentMissing"] as? Int ?? 0
-            let context = result["contextCount"] as? Int ?? 0
-            let partial = missing > 0 || result["contextPartial"] as? Bool == true
+            let imageText = result["imageTextCount"] as? Int ?? 0
+            let transcripts = result["transcriptCount"] as? Int ?? 0
+            let extractionMissing = result["mediaTextMissing"] as? Int ?? 0
+            let partial = missing > 0 || extractionMissing > 0
             statusLabel.textColor = partial ? .systemOrange : .systemGreen
-            statusLabel.stringValue = partial ? "已保存；部分附件或上下文不可用 / Saved with gaps"
+            statusLabel.stringValue = partial ? "已保存；部分附件或媒体文字不可用 / Saved with gaps"
                 : requestedSummary && result["hasSummary"] as? Bool != true
                 ? "正文已保存；摘要未生成 / Saved; summary unavailable"
                 : (result["opened"] as? Bool == true ? "已保存并打开 Obsidian / Saved and opened in Obsidian" : "已保存 / Saved")
-            detailLabel.stringValue = "\(attachments) attachments · \(context) related posts" +
-                (missing > 0 ? " · \(missing) not archived" : "") + "\n" + (result["note"] as? String ?? "")
+            detailLabel.stringValue = "\(attachments) attachments · \(imageText) images with text · \(transcripts) transcripts" +
+                (missing + extractionMissing > 0 ? " · \(missing + extractionMissing) unavailable" : "") +
+                "\n" + (result["note"] as? String ?? "")
         case "incomplete":
             statusLabel.textColor = .systemOrange
             statusLabel.stringValue = "仅获取链接或预览，未获取正文 / Content incomplete"

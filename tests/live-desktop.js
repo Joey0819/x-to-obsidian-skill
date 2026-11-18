@@ -24,7 +24,7 @@ async function main() {
     launched = true;
     await new Promise(resolve => setTimeout(resolve, 1000));
     execFileSync("/usr/bin/open", [`x2obsidian://save?url=${encodeURIComponent(source)}`]);
-    const deadline = Date.now() + 180000;
+    const deadline = Date.now() + 600000;
     let result;
     while (Date.now() < deadline) {
       if (fs.existsSync(resultFile)) {
@@ -40,15 +40,20 @@ async function main() {
     assert.ok(embeds.length > 0);
     assert.equal(embeds.length, result.attachmentCount);
     for (const embed of embeds) assert.ok(fs.statSync(path.join(vault, embed)).size > 0);
+    assert.doesNotMatch(note, /^## Conversation Context$/m);
     if (mode === "article") {
       assert.ok(note.length > 1000);
       assert.match(note.split("#### Article Content")[1]?.split("## Media")[0] || "", /!\[\[X\/Attachments\/[^\]]+\.(?:jpg|png|webp)\]\]/);
+      assert.ok(result.imageTextCount > 0);
+      assert.match(note, /^## Image Text \(OCR\)$/m);
     } else {
-      assert.match(note, /### Quoted post:[\s\S]*?!\[\[X\/Attachments\/[^\]]+\.mp4\]\]/);
-      assert.ok(result.contextCount > 0);
+      assert.ok(embeds.some(embed => embed.endsWith(".mp4")));
+      assert.equal(result.mediaTextMissing, 0);
+      assert.match(note, /^## Video Transcripts$/m);
     }
     console.log(JSON.stringify({ handoff: "passed", mode, characters: note.length,
-      attachments: result.attachmentCount, notArchived: result.attachmentMissing, contextPosts: result.contextCount }));
+      attachments: result.attachmentCount, notArchived: result.attachmentMissing,
+      imageText: result.imageTextCount, transcripts: result.transcriptCount }));
   } finally {
     if (launched) execFileSync("/usr/bin/osascript", ["-e", 'tell application id "com.joey0819.x-to-obsidian" to quit']);
     if (oldResult) fs.writeFileSync(resultFile, oldResult);

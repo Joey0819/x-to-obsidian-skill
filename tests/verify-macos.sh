@@ -6,3 +6,5 @@ trap 'rm -rf "$TEST_DIR"' EXIT
 xcrun swiftc -swift-version 5 desktop/CaptureCore.swift tests/native/main.swift -o "$TEST_DIR/validate"
 "$TEST_DIR/validate"
 xcrun swiftc -swift-version 5 -typecheck desktop/CaptureCore.swift desktop/main.swift -framework AppKit
+xcrun swiftc -swift-version 5 desktop/media-ocr.swift -o "$TEST_DIR/ocr"
+"$TEST_DIR/ocr" "$TEST_DIR/not-an-image" | /usr/bin/grep -q '"unavailable"'

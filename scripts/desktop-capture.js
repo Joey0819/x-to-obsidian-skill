@@ -5,7 +5,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 const { parseArgs, syncOne, normalizeXUrl, existingContentStatus, archiveDetails, currentXUrlsFromChrome } = require("./sync-x-to-obsidian.js");
 
-async function capture(args) {
+async function capture(args, readMedia) {
   const vault = path.resolve(args.vault);
   if (!fs.existsSync(vault) || !fs.statSync(vault).isDirectory()) {
     throw new Error("Choose an existing Obsidian vault / 请选择已有 Obsidian 仓库。");
@@ -27,7 +27,7 @@ async function capture(args) {
     const oldNote = fs.readFileSync(path.join(vault, entry.file), "utf8");
     refresh ||= existingContentStatus(oldNote) === "incomplete" || (args.summarize && !oldNote.includes("## Local AI Summary"));
   }
-  const relative = await syncOne(url, { ...args, vault, url, refresh });
+  const relative = await syncOne(url, { ...args, vault, url, refresh }, readMedia);
   const note = fs.readFileSync(path.join(vault, relative), "utf8");
   return {
     status: existingContentStatus(note) === "complete" ? "saved" : "incomplete",
