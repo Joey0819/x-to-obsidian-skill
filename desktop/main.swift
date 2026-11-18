@@ -162,9 +162,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         panel.canChooseFiles = false
         panel.allowsMultipleSelection = false
         panel.prompt = "选择 / Choose"
+        panel.message = "Choose an existing vault or a folder inside it. / 请选择现有仓库或其中的文件夹。"
         if panel.runModal() == .OK, let url = panel.url {
             vaultField.stringValue = url.path
-            settings.set(url.path, forKey: "vault")
         }
     }
 
@@ -180,9 +180,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc private func saveCurrent() { enqueue(link: nil) }
 
     private func enqueue(link: String?) {
-        if ProcessInfo.processInfo.environment["X2OBSIDIAN_VAULT"] == nil {
-            settings.set(vaultField.stringValue, forKey: "vault")
-        }
         settings.set(modelField.stringValue, forKey: "model")
         settings.set(summaryCheck.state == .on, forKey: "summarize")
         pending.append(Request(link: link, vault: vaultField.stringValue, model: modelField.stringValue,
@@ -231,15 +228,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 }
             } catch { result = ["status": "error", "message": error.localizedDescription] }
             self.writeResult(result)
-            DispatchQueue.main.async { self.complete(result, requestedSummary: request.summarize) }
+            DispatchQueue.main.async { self.complete(result, request: request) }
         }
     }
 
-    private func complete(_ result: [String: Any], requestedSummary: Bool) {
+    private func complete(_ result: [String: Any], request: Request) {
         running = false
         spinner.stopAnimation(nil)
         saveButton.isEnabled = true
         currentButton.isEnabled = true
+        if let resolvedVault = result["vault"] as? String, vaultField.stringValue == request.vault {
+            vaultField.stringValue = resolvedVault
+            if ProcessInfo.processInfo.environment["X2OBSIDIAN_VAULT"] == nil {
+                settings.set(resolvedVault, forKey: "vault")
+            }
+        }
+        let openWarning = result["openWarning"] as? String
         switch result["status"] as? String {
         case "saved":
             let attachments = result["attachmentCount"] as? Int ?? 0
@@ -250,19 +254,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             let subtitles = result["subtitleCount"] as? Int ?? 0
             let extractionMissing = result["mediaTextMissing"] as? Int ?? 0
             let partial = missing > 0 || extractionMissing > 0
-            statusLabel.textColor = partial ? .systemOrange : .systemGreen
-            statusLabel.stringValue = partial ? "已保存；部分附件或媒体文字不可用 / Saved with gaps"
-                : requestedSummary && result["hasSummary"] as? Bool != true
+            statusLabel.textColor = partial || openWarning != nil ? .systemOrange : .systemGreen
+            statusLabel.stringValue = openWarning != nil ? "已保存；未打开 Obsidian / Saved; open unavailable"
+                : partial ? "已保存；部分附件或媒体文字不可用 / Saved with gaps"
+                : request.summarize && result["hasSummary"] as? Bool != true
                 ? "正文已保存；摘要未生成 / Saved; summary unavailable"
-                : (result["opened"] as? Bool == true ? "已保存并打开 Obsidian / Saved and opened in Obsidian" : "已保存 / Saved")
+                : (result["opened"] as? Bool == true ? "已保存并发送到 Obsidian / Saved and sent to Obsidian" : "已保存 / Saved")
             detailLabel.stringValue = "\(attachments) attachments · \(imageText) image OCR · \(transcripts) speech · \(videoOcr) video OCR" +
                 (subtitles > 0 ? " · \(subtitles) subtitle tracks" : "") +
                 (missing + extractionMissing > 0 ? " · \(missing + extractionMissing) gaps" : "") +
-                "\n" + (result["note"] as? String ?? "")
+                "\n" + (result["note"] as? String ?? "") + (openWarning.map { "\n" + $0 } ?? "")
         case "incomplete":
             statusLabel.textColor = .systemOrange
             statusLabel.stringValue = "仅获取链接或预览，未获取正文 / Content incomplete"
             detailLabel.stringValue = "来源可能受限，请稍后重试 / The public source may be restricted; retry later."
+                + (openWarning.map { "\n" + $0 } ?? "")
         default:
             showError(result["message"] as? String ?? "Unable to save / 保存失败。")
         }

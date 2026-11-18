@@ -12,7 +12,7 @@ Save public X/Twitter posts and X Articles as readable Obsidian Markdown for loc
 
 打开应用 → 设置一次浏览器书签 → 在 X 帖子页点击“保存到 Obsidian”。之后无需在终端输入命令。也可在应用中直接粘贴帖子链接，或选择“当前 Chrome 帖子”。
 
-The app lets you choose an existing vault, enable a local Ollama summary, and refresh saved content. Incomplete saved notes are retried automatically. The bookmark sends only the current post URL; it does not read account cookies or synchronize every X bookmark.
+The app lets you choose an existing vault, enable a local Ollama summary, and refresh saved content. Selecting a folder inside a vault saves to that vault's root. Open the vault in Obsidian at least once to enable automatic opening; a saved note is kept even when opening is unavailable. Incomplete saved notes are retried automatically. The bookmark sends only the current post URL; it does not read account cookies or synchronize every X bookmark.
 
 应用可以选择仓库、开启本地摘要、刷新已有内容；已有不完整笔记会自动重试。浏览器书签只发送当前帖子链接，不读取账号 Cookie，也不自动同步全部收藏。
 

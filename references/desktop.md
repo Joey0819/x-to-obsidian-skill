@@ -42,6 +42,8 @@ The bookmark requires the specific post's detail URL. It cannot choose a post fr
 
 macOS may request Documents access when the vault is in Documents, including after a rebuild. Approve it only for the intended app and vault. If it is not approved, the desktop app cannot save to that vault.
 
+Selecting a folder inside an existing vault resolves to that vault's root. Automatic opening uses the note's absolute path and requires the vault to have been opened in Obsidian at least once. If the handoff is unavailable, the app reports where the note was saved.
+
 Apple Vision is bundled for OCR. Video OCR and embedded subtitle extraction need FFmpeg; speech additionally needs whisper.cpp and its model (`brew install ffmpeg whisper.cpp`, then `bash scripts/setup-local-transcription.sh` once). The multilingual model is verified by SHA-256 and stored in `~/Library/Application Support/X to Obsidian/Models/`, outside the vault and the Git checkout. The app locates Homebrew binaries without relying on a Terminal session.
 
 For an optional live check after installation, close the app and run `node tests/live-desktop.js "PUBLIC_X_POST_URL" article` for an article with inline images, or use `video` for a post with its own video. It checks the installed URL handler and saved files/text in a temporary vault. `node tests/live-media-text.js` verifies installed OCR and speech engines using bilingual images, a changing burned-in caption, a repeated overlay, a silent clip and an embedded subtitle track.

@@ -15,13 +15,16 @@ async function main() {
   const app = path.join(os.homedir(), "Applications", "X to Obsidian.app");
   const handler = execFileSync("/usr/bin/xcrun", ["swift", path.join(__dirname, "native", "check-handler.swift")], { encoding: "utf8" }).trim();
   assert.equal(handler, app, "The installed app must be the registered URL handler before testing");
-  const vault = fs.mkdtempSync(path.join(os.tmpdir(), "x2obsidian-desktop-"));
+  const vault = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "x2obsidian-desktop-")));
+  const selected = path.join(vault, "UI repo");
+  fs.mkdirSync(path.join(vault, ".obsidian"));
+  fs.mkdirSync(selected);
   const resultFile = path.join(os.homedir(), "Library", "Logs", "X to Obsidian", "last-result.json");
   const oldResult = fs.existsSync(resultFile) ? fs.readFileSync(resultFile) : null;
   const oldMtime = oldResult ? fs.statSync(resultFile).mtimeMs : 0;
   let launched = false;
   try {
-    execFileSync("/usr/bin/open", ["-a", app, "--env", `X2OBSIDIAN_VAULT=${vault}`, "--env", "X2OBSIDIAN_OPEN_NOTE=0",
+    execFileSync("/usr/bin/open", ["-a", app, "--env", `X2OBSIDIAN_VAULT=${selected}`, "--env", "X2OBSIDIAN_OPEN_NOTE=0",
       "--args", "-summarize", "NO", "-refresh", "NO"]);
     launched = true;
     await new Promise(resolve => setTimeout(resolve, 1000));
@@ -37,6 +40,7 @@ async function main() {
     }
     assert.equal(result?.status, "saved", JSON.stringify(result));
     assert.equal(result.vault, vault);
+    assert.ok(!fs.existsSync(path.join(selected, "X")));
     const note = fs.readFileSync(path.join(vault, result.note), "utf8");
     const embeds = [...new Set([...note.matchAll(/!\[\[(X\/Attachments\/[^\]]+)\]\]/g)].map(match => match[1]))];
     assert.ok(embeds.length > 0);

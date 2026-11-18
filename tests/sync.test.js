@@ -8,6 +8,7 @@ const path = require("node:path");
 const { spawnSync } = require("node:child_process");
 const sync = require("../scripts/sync-x-to-obsidian.js");
 const { capture } = require("../scripts/desktop-capture.js");
+const { resolveVaultRoot, openSavedNote } = require("../scripts/obsidian-vault.js");
 const { parseTranscript, mergeScreenFrames, parseSubtitles } = require("../scripts/media-text.js");
 
 const URL = "https://x.com/example/status/1234567890";
@@ -30,7 +31,8 @@ function articleTweet(withBody = true) {
 }
 
 async function withVault(run) {
-  const vault = fs.mkdtempSync(path.join(os.tmpdir(), "x-to-obsidian-test-"));
+  const vault = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "x-to-obsidian-test-")));
+  fs.mkdirSync(path.join(vault, ".obsidian"));
   const originalFetch = global.fetch;
   const requests = [];
   let tweet = articleTweet();
@@ -162,7 +164,7 @@ test("CLI rejects missing argument values and nonexistent vaults", () => {
     "--vault", path.join(os.tmpdir(), `missing-vault-${process.pid}-${Date.now()}`), "--url", URL,
   ], { encoding: "utf8" });
   assert.equal(result.status, 1);
-  assert.match(result.stderr, /Vault does not exist/);
+  assert.match(result.stderr, /Choose an existing Obsidian vault/);
 });
 
 test("article atomic entities use their DraftJS key rather than array position", () => {
@@ -174,6 +176,51 @@ test("article atomic entities use their DraftJS key rather than array position",
     ],
   });
   assert.equal(markdown, "```\nexample code\n```");
+});
+
+test("desktop saves a selected vault subfolder into the vault root", async () => {
+  await withVault(async ({ vault, args }) => {
+    const selected = path.join(vault, "UI repo", "Nested folder");
+    fs.mkdirSync(selected, { recursive: true });
+    const result = await capture({ ...args, url: URL, vault: selected, open: true });
+    assert.equal(result.status, "saved");
+    assert.equal(result.vault, vault);
+    assert.ok(fs.existsSync(path.join(vault, result.note)));
+    assert.ok(!fs.existsSync(path.join(selected, "X")));
+    assert.equal(result.opened, false, "a local vault folder not added to Obsidian must not raise a popup");
+    assert.ok(result.openWarning);
+  });
+});
+
+test("resolver respects nested vault roots and rejects unrelated folders", async () => {
+  await withVault(async ({ vault }) => {
+    const nested = path.join(vault, "Nested vault");
+    const child = path.join(nested, "Folder");
+    fs.mkdirSync(child, { recursive: true });
+    assert.equal(resolveVaultRoot(child, []), vault);
+    assert.equal(resolveVaultRoot(child, [nested]), nested);
+    fs.mkdirSync(path.join(nested, ".obsidian"));
+    assert.equal(resolveVaultRoot(child, [vault]), nested);
+    fs.rmSync(path.join(vault, ".obsidian"), { recursive: true });
+    assert.throws(() => resolveVaultRoot(vault, []), /Choose an existing Obsidian vault/);
+  });
+});
+
+test("opens an exact UTF-8 note path and reports launch failure without losing the note", async () => {
+  await withVault(async ({ vault }) => {
+    const filename = "X/Tweets/▫️Jubayer #1 & 100%.md";
+    fs.mkdirSync(path.join(vault, "X", "Tweets"), { recursive: true });
+    fs.writeFileSync(path.join(vault, filename), "saved post");
+    const opts = { platform: "darwin", registered: [vault] };
+    let sent;
+    assert.deepEqual(openSavedNote(vault, filename, { ...opts, dispatch: uri => { sent = new globalThis.URL(uri); } }), { opened: true });
+    assert.equal(sent.searchParams.get("path"), path.join(vault, filename));
+    assert.equal(sent.searchParams.has("vault"), false);
+    const failure = openSavedNote(vault, filename, { ...opts, dispatch: () => { throw new Error("open failed"); } });
+    assert.equal(failure.opened, false);
+    assert.match(failure.openWarning, /your note is saved/);
+    assert.equal(fs.readFileSync(path.join(vault, filename), "utf8"), "saved post");
+  });
 });
 
 test("desktop capture reports saved/incomplete state and repairs an incomplete note automatically", async () => {

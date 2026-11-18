@@ -15,6 +15,7 @@ const silentVideo = "https://video.twimg.com/silent.mp4";
 
 async function main() {
   const work = fs.mkdtempSync(path.join(os.tmpdir(), "x2obsidian-media-fixture-"));
+  fs.mkdirSync(path.join(work, ".obsidian"));
   const originalFetch = global.fetch;
   try {
     const png = path.join(work, "image.png");

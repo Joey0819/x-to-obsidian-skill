@@ -19,7 +19,7 @@ function build() {
   fs.mkdirSync(path.dirname(executable), { recursive: true });
   fs.mkdirSync(resources, { recursive: true });
   fs.copyFileSync(path.join(root, "desktop", "Info.plist"), path.join(contents, "Info.plist"));
-  for (const file of ["sync-x-to-obsidian.js", "desktop-capture.js", "media-archive.js", "media-text.js"]) {
+  for (const file of ["sync-x-to-obsidian.js", "desktop-capture.js", "media-archive.js", "media-text.js", "obsidian-vault.js"]) {
     fs.copyFileSync(path.join(root, "scripts", file), path.join(resources, file));
   }
   fs.copyFileSync(path.join(root, "desktop", "bookmark.html"), path.join(resources, "bookmark.html"));

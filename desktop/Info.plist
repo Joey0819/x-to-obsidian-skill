@@ -6,8 +6,8 @@
   <key>CFBundleIdentifier</key><string>com.joey0819.x-to-obsidian</string>
   <key>CFBundleExecutable</key><string>XToObsidian</string>
   <key>CFBundlePackageType</key><string>APPL</string>
-  <key>CFBundleShortVersionString</key><string>1.4.0</string>
-  <key>CFBundleVersion</key><string>5</string>
+  <key>CFBundleShortVersionString</key><string>1.4.1</string>
+  <key>CFBundleVersion</key><string>6</string>
   <key>LSMinimumSystemVersion</key><string>12.0</string>
   <key>NSHighResolutionCapable</key><true/>
   <key>NSAppleEventsUsageDescription</key><string>Read the current X post link in Chrome when you choose Save Current Chrome Post / 点击保存当前 Chrome 帖子时读取帖子链接。</string>

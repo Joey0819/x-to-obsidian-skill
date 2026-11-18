@@ -7,6 +7,7 @@ const os = require("os");
 const { execFileSync } = require("child_process");
 const { archiveMedia, mediaReference, safeHttps } = require("./media-archive.js");
 const { extractMediaText } = require("./media-text.js");
+const { resolveVaultRoot, openSavedNote } = require("./obsidian-vault.js");
 
 const ARCHIVE_VERSION = 4;
 const MEDIA_TEXT_KINDS = {
@@ -968,13 +969,6 @@ function appendInbox(vault, tweet, relativePath) {
   fs.appendFileSync(inboxPath, `${row}\n`);
 }
 
-function openInObsidian(vault, relativePath) {
-  if (process.platform !== "darwin") throw new Error("--open requires macOS; the note was saved successfully.");
-  const vaultName = path.basename(vault);
-  const url = `obsidian://open?vault=${encodeURIComponent(vaultName)}&file=${encodeURIComponent(relativePath)}`;
-  execFileSync("open", [url]);
-}
-
 function sourceUrlFromMarkdown(markdown) {
   const match = String(markdown || "").match(/^source:\s*"?([^"\n]+)"?\s*$/m);
   return match ? match[1].trim() : "";
@@ -1022,7 +1016,6 @@ async function syncOne(url, args, readMedia = extractMediaText) {
   const refresh = args.refresh || (existingMarkdown && (previousArchive.archiveVersion < 3 || needsVideoUpgrade));
   if (existingMarkdown && !refresh) {
     console.log(`Already synced: ${existing.file}`);
-    if (args.open) openInObsidian(args.vault, existing.file);
     return existing.file;
   }
 
@@ -1093,16 +1086,12 @@ async function syncOne(url, args, readMedia = extractMediaText) {
   if (contentStatus(tweet) === "incomplete") {
     console.warn("Capture incomplete / 内容不完整: saved metadata/link/preview only; article body is unavailable.");
   }
-  if (args.open) openInObsidian(args.vault, relativePath);
   return relativePath;
 }
 
 async function main() {
   const args = parseArgs(process.argv);
-  args.vault = path.resolve(args.vault);
-  if (!fs.existsSync(args.vault) || !fs.statSync(args.vault).isDirectory()) {
-    throw new Error("Vault does not exist; pass an existing directory with --vault or X2OBSIDIAN_VAULT.");
-  }
+  args.vault = resolveVaultRoot(args.vault);
   const urls = [];
 
   if (args.refreshIncomplete) {
@@ -1135,7 +1124,11 @@ async function main() {
 
   const unique = [...new Set(urls.map(normalizeXUrl))];
   for (const url of unique) {
-    await syncOne(url, args);
+    const relative = await syncOne(url, args);
+    if (args.open) {
+      const handoff = openSavedNote(args.vault, relative);
+      if (handoff.openWarning) console.warn(handoff.openWarning);
+    }
   }
 }
 

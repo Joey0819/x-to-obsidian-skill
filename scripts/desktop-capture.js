@@ -3,13 +3,11 @@
 
 const fs = require("node:fs");
 const path = require("node:path");
+const { resolveVaultRoot, openSavedNote } = require("./obsidian-vault.js");
 const { parseArgs, syncOne, normalizeXUrl, existingContentStatus, archiveDetails, currentXUrlsFromChrome } = require("./sync-x-to-obsidian.js");
 
 async function capture(args, readMedia) {
-  const vault = path.resolve(args.vault);
-  if (!fs.existsSync(vault) || !fs.statSync(vault).isDirectory()) {
-    throw new Error("Choose an existing Obsidian vault / 请选择已有 Obsidian 仓库。");
-  }
+  const vault = resolveVaultRoot(args.vault);
   let url = args.url;
   if (!url && args.current) {
     const tabs = currentXUrlsFromChrome();
@@ -29,12 +27,13 @@ async function capture(args, readMedia) {
   }
   const relative = await syncOne(url, { ...args, vault, url, refresh }, readMedia);
   const note = fs.readFileSync(path.join(vault, relative), "utf8");
+  const handoff = args.open ? openSavedNote(vault, relative) : { opened: false };
   return {
     status: existingContentStatus(note) === "complete" ? "saved" : "incomplete",
     note: relative,
     hasSummary: note.includes("## Local AI Summary"),
     ...archiveDetails(note),
-    opened: Boolean(args.open),
+    ...handoff,
     vault,
   };
 }
