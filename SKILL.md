@@ -1,6 +1,6 @@
 ---
 name: x-to-obsidian
-description: "Save public X/Twitter posts and X Articles into Obsidian, including a macOS app and browser bookmark for capture without Terminal, optional local Ollama summaries, and safe refresh. Use to save X content, set up one-click capture, or troubleshoot imported notes."
+description: "Save public X/Twitter posts and articles, offline images and videos, and conversation context into Obsidian. Use for browser or macOS capture, refreshing old notes, optional local summaries, or troubleshooting imports."
 ---
 
 # X to Obsidian / X 内容入库
@@ -44,7 +44,7 @@ node scripts/sync-x-to-obsidian.js --vault "/path/to/vault" --file "/path/to/url
 
 ## Refresh and Summarize / 刷新与总结
 
-Existing tweet IDs are skipped unless refreshed. Refresh updates generated source sections, preserves `My Notes`, and backs up the old note in the vault's hidden `X/.x-sync-backups/` directory. Other user edits remain recoverable in that backup.
+Existing tweet IDs are skipped unless refreshed or still on the old text-only format. Re-saving an old note upgrades it in place. Refresh updates generated source sections, preserves `My Notes`, and backs up the old note in the vault's hidden `X/.x-sync-backups/` directory. Other user edits remain recoverable in that backup.
 
 ```bash
 node scripts/sync-x-to-obsidian.js --vault "/path/to/vault" --url "https://x.com/author/status/1234567890" --refresh
@@ -63,7 +63,7 @@ Summaries use local Ollama at `http://localhost:11434`, with Chinese first and a
 
 - Read the generated file, not just the command's success message. Confirm real prose under `Original Post` or `Article Content`; report URL-only/preview-only results as incomplete. A failed refresh must not replace a good full-text note with weaker content.
 - Check `X/Tweets/`, the ID entry in `X/.x-sync-index.json`, and the link in `X/Inbox/X Inbox.md`. Repeating the same URL must not create another note or inbox row.
-- Media are remote links, not downloaded offline files. Image text, video transcripts, quoted-post bodies, and entire threads are not automatically extracted. Report those boundaries if relevant.
+- Check that embeds under `X/Attachments/<post-id>/` resolve to local files; article images appear in their original positions when the source provides those positions. Check the conversation section for quoted posts, thread context, and the first page of public replies, up to 20 related posts. Unsupported and missing files remain source links where available. This is not an archive of every reply, external page, image text, or video transcript.
 - Verify Obsidian rendering when app access is available. The importer does not build Copilot's index or send a Copilot chat message.
 - When summary integration is requested, verify an answer in Copilot using the freshly attached current note. A direct Ollama response proves model ability but does not prove Copilot context is fresh.
 

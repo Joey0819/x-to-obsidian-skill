@@ -8,7 +8,9 @@ const { execFileSync, spawnSync } = require("node:child_process");
 
 async function main() {
   const source = process.argv[2];
+  const mode = process.argv[3] || "article";
   if (!source) throw new Error("Pass a public X post URL for this optional network integration check.");
+  if (!["article", "video"].includes(mode)) throw new Error("Expected article or video mode.");
   if (spawnSync("/usr/bin/pgrep", ["-x", "XToObsidian"]).status === 0) throw new Error("Close X to Obsidian before the isolated integration check.");
   const app = path.join(os.homedir(), "Applications", "X to Obsidian.app");
   const handler = execFileSync("/usr/bin/xcrun", ["swift", path.join(__dirname, "native", "check-handler.swift")], { encoding: "utf8" }).trim();
@@ -22,7 +24,7 @@ async function main() {
     launched = true;
     await new Promise(resolve => setTimeout(resolve, 1000));
     execFileSync("/usr/bin/open", [`x2obsidian://save?url=${encodeURIComponent(source)}`]);
-    const deadline = Date.now() + 150000;
+    const deadline = Date.now() + 180000;
     let result;
     while (Date.now() < deadline) {
       if (fs.existsSync(resultFile)) {
@@ -34,9 +36,19 @@ async function main() {
     assert.equal(result?.status, "saved", JSON.stringify(result));
     assert.equal(result.vault, vault);
     const note = fs.readFileSync(path.join(vault, result.note), "utf8");
-    assert.ok(note.includes("#### Article Content"), "the requested test article should have a full body");
-    assert.ok(note.length > 1000, "the note must contain more than a placeholder");
-    console.log(JSON.stringify({ handoff: "passed", status: result.status, characters: note.length, hasArticleBody: true }));
+    const embeds = [...new Set([...note.matchAll(/!\[\[(X\/Attachments\/[^\]]+)\]\]/g)].map(match => match[1]))];
+    assert.ok(embeds.length > 0);
+    assert.equal(embeds.length, result.attachmentCount);
+    for (const embed of embeds) assert.ok(fs.statSync(path.join(vault, embed)).size > 0);
+    if (mode === "article") {
+      assert.ok(note.length > 1000);
+      assert.match(note.split("#### Article Content")[1]?.split("## Media")[0] || "", /!\[\[X\/Attachments\/[^\]]+\.(?:jpg|png|webp)\]\]/);
+    } else {
+      assert.match(note, /### Quoted post:[\s\S]*?!\[\[X\/Attachments\/[^\]]+\.mp4\]\]/);
+      assert.ok(result.contextCount > 0);
+    }
+    console.log(JSON.stringify({ handoff: "passed", mode, characters: note.length,
+      attachments: result.attachmentCount, notArchived: result.attachmentMissing, contextPosts: result.contextCount }));
   } finally {
     if (launched) execFileSync("/usr/bin/osascript", ["-e", 'tell application id "com.joey0819.x-to-obsidian" to quit']);
     if (oldResult) fs.writeFileSync(resultFile, oldResult);

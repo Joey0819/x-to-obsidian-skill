@@ -5,7 +5,10 @@ const fs = require("fs");
 const path = require("path");
 const os = require("os");
 const { execFileSync } = require("child_process");
+const { archiveMedia, mediaReference, safeHttps } = require("./media-archive.js");
 
+const ARCHIVE_VERSION = 2;
+const CONTEXT_LIMIT = 20;
 const DEFAULT_VAULT = process.env.X2OBSIDIAN_VAULT || path.join(os.homedir(), "Documents", "Obsidian Vault");
 const DEFAULT_MODEL = process.env.X2OBSIDIAN_MODEL || "gemma4:26b";
 const X_WEB_GRAPHQL_FEATURES = {
@@ -168,9 +171,9 @@ function parseTweetUrl(url) {
   return { handle: match[1], id: match[2] };
 }
 
-async function fetchText(url, extraHeaders = {}) {
+async function fetchText(url, extraHeaders = {}, timeout = 30000) {
   const res = await fetch(url, {
-    signal: AbortSignal.timeout(30000),
+    signal: AbortSignal.timeout(timeout),
     headers: {
       "user-agent": "Mozilla/5.0 x-to-obsidian-local-sync",
       accept: "application/json,text/plain,text/html,*/*",
@@ -184,11 +187,11 @@ async function fetchText(url, extraHeaders = {}) {
   return res.text();
 }
 
-async function fetchJson(url, extraHeaders = {}) {
+async function fetchJson(url, extraHeaders = {}, timeout) {
   const text = await fetchText(url, {
     accept: "application/json,text/plain,*/*",
     ...extraHeaders,
-  });
+  }, timeout);
   return JSON.parse(text);
 }
 
@@ -239,10 +242,10 @@ async function fetchOfficialTweet(url) {
   };
 }
 
-async function fetchFxTweet(url) {
+async function fetchFxTweet(url, timeout) {
   const { handle, id } = parseTweetUrl(url);
   const fxUrl = `https://api.fxtwitter.com/${encodeURIComponent(handle)}/status/${encodeURIComponent(id)}`;
-  const data = await fetchJson(fxUrl);
+  const data = await fetchJson(fxUrl, {}, timeout);
   return data && data.tweet ? data.tweet : null;
 }
 
@@ -291,21 +294,31 @@ function tweetFromXWebResult(result, url, fallbackHandle, fallbackId) {
   const userCore = user && user.core ? user.core : {};
   const legacy = result.legacy || {};
   const articleResult = result.article && result.article.article_results ? result.article.article_results.result : null;
-  const article = extractArticle({ article: articleResult });
+  const source = {
+    article: articleResult,
+    media_entities: legacy.extended_entities?.media,
+    raw_text: { facets: legacy.entities?.urls?.map(link => ({ type: "url", ...link })) },
+  };
+  const media = extractMedia(source);
+  const article = extractArticle(source, media);
   const handle = userCore.screen_name || fallbackHandle;
+  const text = result.note_tweet?.note_tweet_results?.result?.text || legacy.full_text || "";
   return {
     id: result.rest_id || legacy.id_str || fallbackId,
     url,
     handle,
     authorName: userCore.name || handle,
     authorUrl: `https://x.com/${handle}`,
-    text: legacy.full_text || "",
-    rawText: legacy.full_text || "",
+    text,
+    rawText: text,
     postedAt: dateFromTwitterCreatedAt(legacy.created_at),
     provider: "X",
     contentType: article ? "x_article" : "x_post",
     article,
-    media: extractXWebMedia(result),
+    media,
+    links: extractLinks(source),
+    quoteId: legacy.quoted_status_id_str,
+    parentId: legacy.in_reply_to_status_id_str,
     stats: {
       likes: numberOrNull(legacy.favorite_count),
       retweets: numberOrNull(legacy.retweet_count),
@@ -324,20 +337,15 @@ async function fetchTweet(url) {
   let xWebTweet = null;
   const fetchWarnings = [];
 
-  try {
-    official = await fetchOfficialTweet(url);
-  } catch (error) {
-    fetchWarnings.push(`official oEmbed failed: ${error.message}`);
-  }
-
-  try {
-    fxTweet = await fetchFxTweet(url);
-  } catch (error) {
-    fetchWarnings.push(`article/card fallback failed: ${error.message}`);
-  }
+  [official, fxTweet] = await Promise.all([
+    fetchOfficialTweet(url).catch(error => { fetchWarnings.push(`official oEmbed failed: ${error.message}`); return null; }),
+    fetchFxTweet(url).catch(error => { fetchWarnings.push(`structured source failed: ${error.message}`); return null; }),
+  ]);
 
   const initialText = textFromFxTweet(fxTweet) || (official ? official.text : "");
-  if (!fxTweet || (!extractArticle(fxTweet) && isUrlOnlyText(initialText))) {
+  const fxMedia = extractMedia(fxTweet);
+  const fxArticle = extractArticle(fxTweet, fxMedia);
+  if (!fxTweet || (fxArticle && !fxArticle.markdown) || (!fxArticle && !fxMedia.length && isUrlOnlyText(initialText))) {
     try {
       xWebTweet = await fetchXWebTweet(url);
     } catch (error) {
@@ -352,14 +360,19 @@ async function fetchTweet(url) {
   const fxAuthor = fxTweet && fxTweet.author ? fxTweet.author : {};
   const rawText = textFromFxTweet(fxTweet) || (xWebTweet ? xWebTweet.rawText : "") || (official ? official.text : "");
   const officialText = official ? official.text : "";
-  const article = extractArticle(fxTweet) || (xWebTweet ? xWebTweet.article : null);
+  const article = fxArticle?.markdown ? fxArticle : xWebTweet?.article || fxArticle;
   const text = chooseMainText(rawText, officialText, article);
-  if (!text && !article) {
+  const media = dedupeMedia([...(xWebTweet?.media || []), ...fxMedia]);
+  const context = await fetchContext(id, fxTweet || {
+    replying_to_status: xWebTweet?.parentId,
+    replies: xWebTweet?.stats?.replies,
+    quote: xWebTweet?.quoteId ? { id: xWebTweet.quoteId } : undefined,
+  }, article);
+  if (!text && !article && !media.length && !context.posts.length && !fxTweet?.poll) {
     throw new Error("Could not extract tweet or article text from the available X sources.");
   }
 
   const stats = { ...(xWebTweet && xWebTweet.stats ? xWebTweet.stats : {}), ...extractStats(fxTweet) };
-  const media = [...(xWebTweet && xWebTweet.media ? xWebTweet.media : []), ...extractMedia(fxTweet)];
   return {
     id,
     url,
@@ -373,6 +386,10 @@ async function fetchTweet(url) {
     contentType: article ? "x_article" : "x_post",
     article,
     media,
+    links: [...new Set([...extractLinks(fxTweet), ...(xWebTweet?.links || [])])],
+    poll: fxTweet?.poll,
+    context,
+    structuredSource: !!(fxTweet || xWebTweet),
     stats,
     fetchWarnings,
   };
@@ -471,10 +488,25 @@ function numberOrNull(value) {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
-function extractArticle(tweet) {
+function extractArticle(tweet, media = extractMedia(tweet)) {
   if (!tweet || !tweet.article) return null;
   const article = tweet.article;
-  const markdown = articleBlocksToMarkdown(article.content || article.content_state || {});
+  const content = article.content || article.content_state || {};
+  const missing = new Set();
+  const inlinePostIds = [...new Set(Object.values(content.entityMap || {}).flatMap(entry => {
+    const entity = entry?.value || entry;
+    return entity?.type === "TWEET" && /^\d+$/.test(entity.data?.tweetId) ? [String(entity.data.tweetId)] : [];
+  }))];
+  const render = (archived, inline = new Set()) => articleBlocksToMarkdown(content, mediaId => {
+    const item = media.find(candidate => candidate.ids.includes(String(mediaId)));
+    if (!item) {
+      missing.add(String(mediaId));
+      return "X article attachment unavailable.";
+    }
+    inline.add(item.url);
+    return mediaReference(item, archived);
+  }) || String(article.plain_text || "").trim();
+  const markdown = render();
   const title = article.title || "";
   const previewText = article.preview_text || article.previewText || "";
   if (!title && !previewText && !markdown) return null;
@@ -486,10 +518,13 @@ function extractArticle(tweet) {
     modifiedAt: article.modified_at || "",
     sourceUrl: article.rest_id ? `https://x.com/i/article/${article.rest_id}` : "",
     markdown,
+    render,
+    missingAttachments: missing.size,
+    inlinePostIds,
   };
 }
 
-function articleBlocksToMarkdown(content) {
+function articleBlocksToMarkdown(content, renderMedia) {
   const blocks = Array.isArray(content.blocks) ? content.blocks : [];
   const entityMap = content.entityMap || {};
   const lines = [];
@@ -502,7 +537,7 @@ function articleBlocksToMarkdown(content) {
     if (type !== "ordered-list-item") orderedCounter = 1;
 
     if (type === "atomic") {
-      pushMarkdownBlock(lines, markdownForAtomicBlock(block, entityMap));
+      pushMarkdownBlock(lines, markdownForAtomicBlock(block, entityMap, renderMedia));
       continue;
     }
 
@@ -526,7 +561,7 @@ function articleBlocksToMarkdown(content) {
   return lines.join("\n").replace(/\n{3,}/g, "\n\n").trim();
 }
 
-function markdownForAtomicBlock(block, entityMap) {
+function markdownForAtomicBlock(block, entityMap, renderMedia) {
   const range = Array.isArray(block.entityRanges) ? block.entityRanges[0] : null;
   if (!range) return "";
   // X may return entries in array order different from their DraftJS entity key.
@@ -539,8 +574,11 @@ function markdownForAtomicBlock(block, entityMap) {
 
   if (type === "MARKDOWN" && data.markdown) return String(data.markdown).trim();
   if (type === "DIVIDER") return "---";
-  if (type === "LINK" && data.url) return `[${data.url}](${data.url})`;
-  if (type === "TWEET" && data.tweetId) return `Embedded tweet: https://x.com/i/status/${data.tweetId}`;
+  if (type === "LINK" && safeHttps(data.url)) return `<${safeHttps(data.url)}>`;
+  if (type === "TWEET" && /^\d+$/.test(data.tweetId)) return `Embedded post: https://x.com/i/status/${data.tweetId}`;
+  if (type === "MEDIA" && renderMedia && Array.isArray(data.mediaItems)) {
+    return data.mediaItems.map(item => renderMedia(item.mediaId)).join("\n\n");
+  }
   return "";
 }
 
@@ -552,60 +590,127 @@ function pushMarkdownBlock(lines, value) {
 
 function extractMedia(tweet) {
   if (!tweet) return [];
-  const media = [];
-  const seen = new Set();
+  const attached = tweet.media || {};
   const sources = [
-    tweet.media_entities,
-    tweet.article && tweet.article.cover_media ? [tweet.article.cover_media] : [],
-    tweet.article && tweet.article.media_entities,
+    [tweet.article?.cover_media].filter(Boolean), attached.all, attached.photos, attached.videos,
+    tweet.media_entities, tweet.article?.media_entities, [attached.external, attached.broadcast].filter(Boolean),
   ];
-
+  const media = [];
   for (const source of sources) {
     if (!Array.isArray(source)) continue;
     for (const item of source) {
-      const info = item && item.media_info ? item.media_info : {};
-      const url = info.original_img_url || info.url || item.url;
-      if (!url || seen.has(url)) continue;
-      seen.add(url);
+      if (!item || item.type === "mosaic_photo") continue;
+      const info = item.media_info || item;
+      const variants = info.video_info?.variants || info.variants || info.formats || [];
+      const mp4 = (Array.isArray(variants) ? variants : []).filter(v => safeHttps(v.url)
+        && (v.content_type === "video/mp4" || v.container === "mp4" || /\.mp4(?:$|\?)/i.test(v.url)));
+      const variantsBySize = mp4.filter(v => !v.size || v.size <= 64 * 1024 * 1024)
+        .sort((a, b) => (a.bitrate || a.width || 0) - (b.bitrate || b.width || 0));
+      // Favor a watchable copy without letting a 4K rendition dominate a mixed-media capture.
+      const preferred = variantsBySize.filter(v => !v.bitrate || v.bitrate <= 2500000).at(-1) || variantsBySize[0];
+      const type = String(item.type || info.__typename || "media").toLowerCase();
+      const url = safeHttps(preferred?.url || info.original_img_url || info.url || item.url || info.media_url_https);
+      if (!url) continue;
       media.push({
         url,
+        fallback: safeHttps(variantsBySize[0]?.url),
+        ids: [item.media_id, item.id, item.id_str, item.media_key].filter(Boolean).map(String),
         width: numberOrNull(info.original_img_width || info.width),
         height: numberOrNull(info.original_img_height || info.height),
-        type: info.__typename || item.type || "media",
+        alt: String(info.altText || info.ext_alt_text || info.alt_text || ""),
+        cover: item === tweet.article?.cover_media,
+        linkOnly: item === attached.external || item === attached.broadcast || /\.m3u8(?:$|\?)/i.test(url),
       });
+      const thumbnail = safeHttps(info.thumbnail_url
+        || (/video|animated_gif/.test(type) && info.media_url_https));
+      if (thumbnail && thumbnail !== url) media.push({ url: thumbnail, ids: [], alt: "Video preview" });
     }
   }
-
-  return media;
+  return dedupeMedia(media);
 }
 
-function extractXWebMedia(result) {
-  const articleResult = result.article && result.article.article_results ? result.article.article_results.result : null;
-  const media = [];
-  const seen = new Set();
-  const sources = [
-    articleResult && articleResult.cover_media ? [articleResult.cover_media] : [],
-    articleResult && articleResult.media_entities,
-    result.legacy && result.legacy.extended_entities ? result.legacy.extended_entities.media : [],
-  ];
+function dedupeMedia(items) {
+  const byUrl = new Map();
+  for (const item of items) {
+    const previous = byUrl.get(item.url);
+    byUrl.set(item.url, previous ? {
+      ...previous,
+      ids: [...new Set([...previous.ids, ...item.ids])],
+      cover: previous.cover || item.cover,
+      alt: previous.alt || item.alt,
+    } : item);
+  }
+  return [...byUrl.values()];
+}
 
-  for (const source of sources) {
-    if (!Array.isArray(source)) continue;
-    for (const item of source) {
-      const info = item && item.media_info ? item.media_info : item;
-      const mediaUrl = info && (info.original_img_url || info.media_url_https || info.url);
-      if (!mediaUrl || seen.has(mediaUrl)) continue;
-      seen.add(mediaUrl);
-      media.push({
-        url: mediaUrl,
-        width: numberOrNull(info.original_img_width || info.width),
-        height: numberOrNull(info.original_img_height || info.height),
-        type: info.__typename || item.type || "media",
-      });
-    }
+function extractLinks(tweet) {
+  const facets = tweet?.raw_text?.facets || [];
+  return [...new Set(facets.filter(facet => facet.type === "url")
+    .map(facet => safeHttps(facet.expanded_url || facet.replacement || facet.url)).filter(Boolean))];
+}
+
+async function fetchContext(id, tweet, article) {
+  const posts = [];
+  const seen = new Set([id]);
+  let partial = false;
+  let limited = false;
+  function add(raw, label, depth = 0) {
+    const postId = String(raw?.id || "");
+    if (!/^\d+$/.test(postId) || seen.has(postId)) return;
+    if (posts.length >= CONTEXT_LIMIT) { limited = true; return; }
+    seen.add(postId);
+    const media = extractMedia(raw);
+    const post = {
+      id: postId, label, media, text: textFromFxTweet(raw), links: extractLinks(raw),
+      article: extractArticle(raw, media), postedAt: dateFromFxTweet(raw),
+      author: raw.author?.name || raw.author?.screen_name || "",
+      url: `https://x.com/i/status/${postId}`,
+    };
+    post.unavailable = !post.text && !post.article && !media.length;
+    partial ||= post.unavailable;
+    posts.push(post);
+    if (raw.quote && depth < 2) add(raw.quote, "Quoted post", depth + 1);
+    else if (raw.quote) limited = true;
   }
 
-  return media;
+  if (tweet?.quote) {
+    const quote = tweet.quote;
+    if (!textFromFxTweet(quote) && !quote.media && !quote.article && /^\d+$/.test(quote.id)) {
+      const full = await fetchFxTweet(`https://x.com/i/status/${quote.id}`, 8000).catch(() => null);
+      add(full || quote, "Quoted post");
+    } else add(quote, "Quoted post");
+    if (!posts.length) partial = true;
+  }
+  const embedded = article?.inlinePostIds.filter(postId => !seen.has(postId)) || [];
+  limited ||= embedded.length > 4;
+  const embeddedPosts = await Promise.all(embedded.slice(0, 4).map(async postId =>
+    await fetchFxTweet(`https://x.com/i/status/${postId}`, 8000).catch(() => null) || { id: postId }));
+  for (const post of embeddedPosts) add(post, "Embedded article post");
+  const parentId = String(tweet?.replying_to_status || "");
+  if (/^\d+$/.test(parentId) || Number(tweet?.replies) > 0) {
+    try {
+      const result = await fetchJson(`https://api.fxtwitter.com/2/conversation/${id}`, {}, 10000);
+      if (String(result?.status?.id) !== id || !Array.isArray(result.thread) || !Array.isArray(result.replies)) {
+        throw new Error("unexpected conversation response");
+      }
+      if (!tweet.quote && result.status.quote) add(result.status.quote, "Quoted post");
+      for (const item of result.thread) add(item, "Thread context");
+      for (const item of result.replies) add(item, "Public reply");
+      limited ||= Boolean(result.cursor?.bottom);
+    } catch {
+      partial = true;
+    }
+    if (/^\d+$/.test(parentId) && !seen.has(parentId)) {
+      try {
+        const parent = await fetchFxTweet(`https://x.com/i/status/${parentId}`, 8000);
+        add({ ...parent, id: parentId }, "In reply to");
+      } catch {
+        partial = true;
+        add({ id: parentId }, "In reply to");
+      }
+    }
+  }
+  return { posts, partial, limited };
 }
 
 async function summarizeWithOllama(tweet, model) {
@@ -615,11 +720,13 @@ async function summarizeWithOllama(tweet, model) {
   const articleSection = tweet.article
     ? `\nArticle title: ${tweet.article.title}\nArticle preview:\n${tweet.article.previewText}\n\nArticle content:\n${tweet.article.markdown}`
     : "";
+  const contextSection = (tweet.context?.posts || []).filter(post => !post.unavailable)
+    .map(post => `${post.label} by ${post.author}: ${post.text}`).join("\n");
   const prompt = `Summarize this X post for an Obsidian note. Use Chinese first, then one short English line. Keep it concise.
 
 Author: ${tweet.authorName} (@${tweet.handle})
 Post:
-${tweet.text}${articleSection}`;
+${tweet.text}${articleSection}${contextSection ? `\n\nPublic context:\n${contextSection}` : ""}`;
 
   const res = await fetch("http://localhost:11434/api/chat", {
     method: "POST",
@@ -674,15 +781,33 @@ function yamlString(value) {
 }
 
 function extractMyNotes(markdown) {
-  const match = String(markdown || "").match(/(?:^|\n)## My Notes\s*\n([\s\S]*)$/);
-  if (!match) return "- ";
-  const body = match[1].trimEnd();
+  const headings = [...String(markdown || "").matchAll(/(?:^|\n)## My Notes[^\S\n]*\n/g)];
+  if (!headings.length) return "- ";
+  const match = headings.at(-1);
+  const body = markdown.slice(match.index + match[0].length).replace(/^(?:[ \t]*\r?\n)+/, "").trimEnd();
   return body.trim() ? body : "- ";
 }
 
 function contentStatus(tweet) {
-  if (tweet.article) return tweet.article.markdown && !isUrlOnlyText(tweet.article.markdown) ? "complete" : "incomplete";
-  return tweet.text && !isUrlOnlyText(tweet.text) ? "complete" : "incomplete";
+  if (tweet.article) return tweet.article.markdown && !isUrlOnlyText(tweet.article.markdown)
+    && (tweet.archivedPrimary || tweet.article.markdown.split("\n").some(line => line.trim()
+      && !/^(?:X article attachment unavailable\.|\[Media source \(not archived\)\]|---)/.test(line.trim())))
+    ? "complete" : "incomplete";
+  return (tweet.text && !isUrlOnlyText(tweet.text)) || tweet.archivedPrimary
+    || tweet.context?.posts.some(post => post.label === "Quoted post" && !post.unavailable)
+    || tweet.poll?.choices?.length ? "complete" : "incomplete";
+}
+
+function archiveDetails(markdown) {
+  const frontmatter = String(markdown).match(/^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/)?.[1] || "";
+  const num = key => Number(frontmatter.match(new RegExp(`^${key}: (\\d+)$`, "m"))?.[1] || 0);
+  return {
+    archiveVersion: num("archive_version"),
+    attachmentCount: num("attachments_saved"),
+    attachmentMissing: num("attachments_not_archived"),
+    contextCount: num("context_posts"),
+    contextPartial: /^context_partial: true$/m.test(frontmatter),
+  };
 }
 
 function existingContentStatus(markdown) {
@@ -699,10 +824,23 @@ function extractSummary(markdown) {
   return match ? match[1].trim() : "";
 }
 
-function buildNote(tweet, summary, myNotes, capturedAt = new Date().toISOString()) {
+function appendMedia(lines, items, archived, inline = new Set()) {
+  for (const item of items) {
+    if (!inline.has(item.url)) lines.push(mediaReference(item, archived), "");
+    if (item.alt) lines.push(`- Alt text: ${item.alt.replace(/\s+/g, " ")}`);
+    if (archived.has(item.url)) lines.push(`- Media source: <${item.url}>`);
+    lines.push("");
+  }
+}
+
+function buildNote(tweet, summary, myNotes, capturedAt = new Date().toISOString(), archive = { saved: new Map(), unavailable: 0 }) {
   const title = `X - ${tweet.authorName} - ${tweet.id}`;
   const articleTitle = tweet.article && tweet.article.title ? tweet.article.title : "";
   const stats = tweet.stats || {};
+  const context = tweet.context || { posts: [] };
+  const archived = archive.saved;
+  const inline = new Set();
+  const contextPartial = !!(context.partial || tweet.structuredSource === false);
   const lines = [
     "---",
     "platform: X",
@@ -710,6 +848,11 @@ function buildNote(tweet, summary, myNotes, capturedAt = new Date().toISOString(
     `tweet_id: ${yamlString(tweet.id)}`,
     `content_type: ${yamlString(tweet.contentType || "x_post")}`,
     `capture_status: ${yamlString(contentStatus(tweet))}`,
+    `archive_version: ${ARCHIVE_VERSION}`,
+    `attachments_saved: ${archived.size}`,
+    `attachments_not_archived: ${archive.unavailable}`,
+    `context_posts: ${context.posts.length}`,
+    `context_partial: ${contextPartial}`,
     `author: ${yamlString(tweet.authorName)}`,
     `handle: ${yamlString(tweet.handle)}`,
     `author_url: ${yamlString(tweet.authorUrl)}`,
@@ -767,19 +910,44 @@ function buildNote(tweet, summary, myNotes, capturedAt = new Date().toISOString(
     if (tweet.article.previewText) {
       lines.push("#### Preview", "", tweet.article.previewText, "");
     }
+    const cover = tweet.media?.find(item => item.cover);
+    if (cover) {
+      lines.push("#### Cover", "", mediaReference(cover, archived), "");
+      inline.add(cover.url);
+    }
     if (tweet.article.markdown) {
-      lines.push("#### Article Content", "", tweet.article.markdown, "");
+      lines.push("#### Article Content", "", tweet.article.render?.(archived, inline) || tweet.article.markdown, "");
     }
   }
 
   if (tweet.media && tweet.media.length > 0) {
     lines.push("## Media", "");
-    tweet.media.forEach((item, index) => {
-      const size = item.width && item.height ? ` (${item.width}x${item.height})` : "";
-      lines.push(`![X media ${index + 1}](${item.url})`);
-      lines.push(`- Source: ${item.url}${size}`);
+    appendMedia(lines, tweet.media, archived, inline);
+  }
+
+  if (tweet.links?.length) lines.push("## Linked Pages", "", ...tweet.links.map(url => `- <${url}>`), "");
+  if (tweet.poll?.choices?.length) {
+    lines.push("## Poll", "", ...tweet.poll.choices.map(choice =>
+      `- ${String(choice.label || "").replace(/\s+/g, " ")}: ${numberOrNull(choice.count) ?? "Unknown"} votes`), "");
+  }
+  if (context.posts.length || contextPartial || context.limited) {
+    lines.push("## Conversation Context", "");
+    if (contextPartial) lines.push("> Some public context could not be retrieved.", "");
+    if (context.limited) lines.push("> Bounded snapshot; more conversation may be available on X.", "");
+    for (const post of context.posts) {
+      const contextInline = new Set();
+      const name = (post.author || "Unknown author").replace(/\s+/g, " ");
+      lines.push(`### ${post.label}: ${name}`, "", `- Source: <${post.url}>${post.postedAt ? ` (${post.postedAt})` : ""}`, "");
+      if (post.unavailable) lines.push("> Post content unavailable.", "");
+      if (post.text) lines.push(`> ${post.text.split(/\r?\n/).join("\n> ")}`, "");
+      if (post.article) lines.push(`#### ${post.article.title || "X Article"}`, "", post.article.render(archived, contextInline) || post.article.previewText, "");
+      appendMedia(lines, post.media, archived, contextInline);
+      for (const url of post.links) lines.push(`- Related link: <${url}>`);
       lines.push("");
-    });
+    }
+  }
+  if (archive.unavailable) {
+    lines.push(`> ${archive.unavailable} media item(s) could not be archived offline. Available source links are retained above.`, "");
   }
 
   if (Object.values(stats).some((value) => value !== null && value !== undefined)) {
@@ -884,15 +1052,30 @@ async function syncOne(url, args) {
   const existing = index.data.tweets[id];
   const existingPath = existing && existing.file ? path.join(args.vault, existing.file) : "";
   const existingMarkdown = existingPath && fs.existsSync(existingPath) ? fs.readFileSync(existingPath, "utf8") : "";
-  if (existingPath && fs.existsSync(existingPath) && !args.refresh) {
+  const previousArchive = archiveDetails(existingMarkdown);
+  const refresh = args.refresh || (existingMarkdown && previousArchive.archiveVersion < ARCHIVE_VERSION);
+  if (existingMarkdown && !refresh) {
     console.log(`Already synced: ${existing.file}`);
     if (args.open) openInObsidian(args.vault, existing.file);
     return existing.file;
   }
 
   const tweet = await fetchTweet(normalized);
-  if (contentStatus(tweet) === "incomplete" && existingMarkdown && existingContentStatus(existingMarkdown) === "complete") {
+  const archive = await archiveMedia(args.vault, id, [...tweet.media, ...tweet.context.posts.flatMap(post => post.media)]);
+  archive.unavailable += (tweet.article?.missingAttachments || 0)
+    + tweet.context.posts.reduce((count, post) => count + (post.article?.missingAttachments || 0), 0);
+  tweet.archivedPrimary = tweet.media.some(item => archive.saved.has(item.url));
+  const lostArticle = !tweet.article?.markdown && /^#### Article Content\s*$/m.test(existingMarkdown);
+  if ((lostArticle || contentStatus(tweet) === "incomplete") && existingMarkdown && existingContentStatus(existingMarkdown) === "complete") {
     throw new Error("Refresh returned incomplete content; the existing full-text note was preserved.");
+  }
+  const oldAttachments = [...existingMarkdown.split("\n## My Notes").slice(0, -1).join("\n## My Notes")
+    .matchAll(/!\[\[(X\/Attachments\/\d+\/[\da-f]{24}\.[a-z0-9]+)\]\]/g)].map(match => match[1]);
+  const newAttachments = new Set(archive.saved.values());
+  if (oldAttachments.some(file => !newAttachments.has(file))
+    || (previousArchive.contextCount && (tweet.context.partial || !tweet.structuredSource)
+      && previousArchive.contextCount > tweet.context.posts.length)) {
+    throw new Error("Refresh returned less media or context; the existing note was preserved.");
   }
   let summary = extractSummary(existingMarkdown);
   if (args.summarize && contentStatus(tweet) === "complete") {
@@ -913,7 +1096,7 @@ async function syncOne(url, args) {
     fs.mkdirSync(backupDir, { recursive: true });
     fs.writeFileSync(path.join(backupDir, `${id}-${Date.now()}.md`), existingMarkdown, { flag: "wx" });
   }
-  fs.writeFileSync(absolutePath, buildNote(tweet, summary, extractMyNotes(existingMarkdown), capturedAt));
+  fs.writeFileSync(absolutePath, buildNote(tweet, summary, extractMyNotes(existingMarkdown), capturedAt, archive));
 
   index.data.tweets[tweet.id] = {
     url: tweet.url,
@@ -924,12 +1107,12 @@ async function syncOne(url, args) {
     article_title: tweet.article && tweet.article.title ? tweet.article.title : "",
     capture_status: contentStatus(tweet),
     captured_at: capturedAt,
-    refreshed_at: args.refresh ? new Date().toISOString() : "",
+    refreshed_at: refresh ? new Date().toISOString() : "",
   };
   saveIndex(index);
   appendInbox(args.vault, tweet, relativePath);
 
-  console.log(`${args.refresh ? "Refreshed" : "Synced"}: ${relativePath}`);
+  console.log(`${refresh ? "Refreshed" : "Synced"}: ${relativePath} (${archive.saved.size} local attachments, ${tweet.context.posts.length} related posts)`);
   if (contentStatus(tweet) === "incomplete") {
     console.warn("Capture incomplete / 内容不完整: saved metadata/link/preview only; article body is unavailable.");
   }
@@ -986,4 +1169,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { parseArgs, normalizeXUrl, articleBlocksToMarkdown, extractArticle, contentStatus, existingContentStatus, currentXUrlsFromChrome, buildNote, syncOne, incompleteNoteUrls };
+module.exports = { parseArgs, normalizeXUrl, articleBlocksToMarkdown, extractArticle, contentStatus, existingContentStatus, archiveDetails, currentXUrlsFromChrome, buildNote, syncOne, incompleteNoteUrls };

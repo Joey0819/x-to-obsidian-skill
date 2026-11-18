@@ -3,7 +3,7 @@
 
 const fs = require("node:fs");
 const path = require("node:path");
-const { parseArgs, syncOne, normalizeXUrl, existingContentStatus, currentXUrlsFromChrome } = require("./sync-x-to-obsidian.js");
+const { parseArgs, syncOne, normalizeXUrl, existingContentStatus, archiveDetails, currentXUrlsFromChrome } = require("./sync-x-to-obsidian.js");
 
 async function capture(args) {
   const vault = path.resolve(args.vault);
@@ -33,6 +33,7 @@ async function capture(args) {
     status: existingContentStatus(note) === "complete" ? "saved" : "incomplete",
     note: relative,
     hasSummary: note.includes("## Local AI Summary"),
+    ...archiveDetails(note),
     opened: Boolean(args.open),
     vault,
   };

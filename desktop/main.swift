@@ -28,6 +28,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         buildWindow()
         if CommandLine.arguments.contains("--check-ui") {
+            detailLabel.stringValue = "35 attachments · 20 related posts · 1 not archived\nX/Tweets/example.md"
             window.contentView!.layoutSubtreeIfNeeded()
             let frame = detailLabel.convert(detailLabel.bounds, to: window.contentView!)
             let fits = frame.minY >= 12 && frame.maxX <= window.contentView!.bounds.width - 12
@@ -201,7 +202,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         saveButton.isEnabled = false
         currentButton.isEnabled = false
         spinner.startAnimation(nil)
-        statusLabel.stringValue = "正在保存正文… / Saving post content…"
+        statusLabel.stringValue = "正在保存正文、附件和上下文… / Saving content, media and context…"
         statusLabel.textColor = .labelColor
         detailLabel.stringValue = ""
         var arguments = [script.path, "--vault", request.vault, "--model", request.model]
@@ -241,11 +242,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         currentButton.isEnabled = true
         switch result["status"] as? String {
         case "saved":
-            statusLabel.textColor = .systemGreen
-            statusLabel.stringValue = requestedSummary && result["hasSummary"] as? Bool != true
+            let attachments = result["attachmentCount"] as? Int ?? 0
+            let missing = result["attachmentMissing"] as? Int ?? 0
+            let context = result["contextCount"] as? Int ?? 0
+            let partial = missing > 0 || result["contextPartial"] as? Bool == true
+            statusLabel.textColor = partial ? .systemOrange : .systemGreen
+            statusLabel.stringValue = partial ? "已保存；部分附件或上下文不可用 / Saved with gaps"
+                : requestedSummary && result["hasSummary"] as? Bool != true
                 ? "正文已保存；摘要未生成 / Saved; summary unavailable"
                 : (result["opened"] as? Bool == true ? "已保存并打开 Obsidian / Saved and opened in Obsidian" : "已保存 / Saved")
-            detailLabel.stringValue = result["note"] as? String ?? ""
+            detailLabel.stringValue = "\(attachments) attachments · \(context) related posts" +
+                (missing > 0 ? " · \(missing) not archived" : "") + "\n" + (result["note"] as? String ?? "")
         case "incomplete":
             statusLabel.textColor = .systemOrange
             statusLabel.stringValue = "仅获取链接或预览，未获取正文 / Content incomplete"

@@ -59,7 +59,11 @@ The primary UI is a native macOS app plus a browser bookmark. It supports direct
 
 ## Output and Limits / 输出与边界
 
-Notes go to `X/Tweets/`; the inbox is `X/Inbox/X Inbox.md`; duplicate tracking is `X/.x-sync-index.json`. A local summary appears above the full article. Remote media links are preserved, but images are not downloaded and video/image text is not transcribed. The tool reports incomplete content instead of treating a URL as the body, and refuses to downgrade a full-text note during refresh.
+Notes go to `X/Tweets/`; offline attachments go to `X/Attachments/<post-id>/`. The note embeds post photos, article cover and inline images, and supported X-hosted videos/GIFs. It also records linked URLs, poll results, quoted posts, and available thread context plus the first page of public replies (at most 20 related posts). Unsupported, oversized, or unavailable media keep a source link instead. Vault sync to another device must include the attachment folder as well as the notes.
+
+This is a bounded capture, not an account or full-thread mirror. Private or removed content, later reply pages, external pages, streaming-only media, image OCR, and video transcription are not archived. Downloads are limited to 64 MiB per file, 48 attachments and 192 MiB of new downloads per capture.
+
+Re-save an older note to upgrade it in place. The importer preserves `My Notes` and the original capture time, keeps a backup, and rejects refreshes that lose the article or drop saved attachments. A local summary appears above the full article and is based on the captured text. The inbox is `X/Inbox/X Inbox.md`; duplicate tracking is `X/.x-sync-index.json`.
 
 笔记保存到 `X/Tweets/`，入口列表和去重索引同步更新。摘要置于正文前。媒体保留远程链接，不自动下载、OCR 或转写。内容不完整会明确提示，刷新不会用不完整内容覆盖已有全文。
 
