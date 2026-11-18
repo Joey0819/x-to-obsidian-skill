@@ -18,6 +18,7 @@ async function main() {
   const vault = fs.mkdtempSync(path.join(os.tmpdir(), "x2obsidian-desktop-"));
   const resultFile = path.join(os.homedir(), "Library", "Logs", "X to Obsidian", "last-result.json");
   const oldResult = fs.existsSync(resultFile) ? fs.readFileSync(resultFile) : null;
+  const oldMtime = oldResult ? fs.statSync(resultFile).mtimeMs : 0;
   let launched = false;
   try {
     execFileSync("/usr/bin/open", ["-a", app, "--env", `X2OBSIDIAN_VAULT=${vault}`, "--env", "X2OBSIDIAN_OPEN_NOTE=0"]);
@@ -27,7 +28,7 @@ async function main() {
     const deadline = Date.now() + 600000;
     let result;
     while (Date.now() < deadline) {
-      if (fs.existsSync(resultFile)) {
+      if (fs.existsSync(resultFile) && fs.statSync(resultFile).mtimeMs !== oldMtime) {
         result = JSON.parse(fs.readFileSync(resultFile, "utf8"));
         if (result.vault === vault || result.status === "error") break;
       }
