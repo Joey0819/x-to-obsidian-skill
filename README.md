@@ -61,7 +61,7 @@ The primary UI is a native macOS app plus a browser bookmark. It supports direct
 
 Notes go to `X/Tweets/`; offline attachments go to `X/Attachments/<post-id>/`. The note embeds the selected post's photos, article cover and inline images, and supported X-hosted videos/GIFs. It does not import quoted-post bodies, threads, or replies. Unsupported, oversized, or unavailable media keep a source link instead. Vault sync to another device must include the attachment folder as well as the notes.
 
-**Image Text (OCR)** and **Video Transcripts** are Markdown sections in the same note. Apple Vision reads images on macOS, including the first frame of an animated GIF. FFmpeg and whisper.cpp transcribe the first audio track of a local MP4 with timestamps in the original language. Silent videos are marked as such; this does not read on-screen text from videos. Local summaries include the extracted text automatically. Recognition may miss or misread source content.
+Extraction stays in the same note: **Image Text (OCR)** for still images and the first frame of an animated GIF, **Video Transcripts** for speech, **Video On-Screen Text (OCR)** for titles and burned-in subtitles, and **Video Subtitle Tracks** for text tracks actually embedded in the MP4. FFmpeg samples the clip and Apple Vision reads the frames, even on silent videos. Repeated lines are merged into approximate time ranges. The sampler checks every 0.5 seconds on typical clips and widens the interval on long clips to stay within 1,200 frames. Brief, small, or blurred text can be missed. Captions served separately by X are not downloaded. Local summaries receive all extracted sections, with overlapping speech and captions treated as the same content.
 
 For a new Mac, install the transcription dependencies once and download the checksum-verified multilingual model, outside the vault:
 
@@ -72,7 +72,7 @@ bash scripts/setup-local-transcription.sh
 
 `X2OBSIDIAN_WHISPER_MODEL` can point to an existing compatible GGML model. Extraction requires no API key or cloud upload. The importer keeps the note and attachments if local extraction is unavailable. Transcription is limited to videos up to 30 minutes; downloads are limited to 64 MiB per file, 48 attachments and 192 MiB of new downloads per capture. Private or removed content, external pages, and streaming-only media are not archived.
 
-Re-save an older note to upgrade it in place or use **Refresh existing content** to retry extraction. The importer preserves `My Notes` and the original capture time, keeps a backup, and rejects refreshes that lose the article, primary attachments, or previously extracted text. Legacy conversation sections are removed on upgrade, but their files are not deleted. The inbox is `X/Inbox/X Inbox.md`; duplicate tracking is `X/.x-sync-index.json`.
+Re-save an older video note to add on-screen text in place, or use **Refresh existing content** to retry extraction. The importer preserves `My Notes` and the original capture time, keeps a backup, and rejects refreshes that lose the article, primary attachments, or previously extracted text. Legacy conversation sections are removed on upgrade, but their files are not deleted. The inbox is `X/Inbox/X Inbox.md`; duplicate tracking is `X/.x-sync-index.json`.
 
 笔记保存到 `X/Tweets/`，入口列表和去重索引同步更新。摘要置于正文前。媒体保留远程链接，不自动下载、OCR 或转写。内容不完整会明确提示，刷新不会用不完整内容覆盖已有全文。
 

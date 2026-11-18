@@ -8,7 +8,7 @@ const path = require("node:path");
 const { spawnSync } = require("node:child_process");
 const sync = require("../scripts/sync-x-to-obsidian.js");
 const { capture } = require("../scripts/desktop-capture.js");
-const { parseTranscript } = require("../scripts/media-text.js");
+const { parseTranscript, mergeScreenFrames, parseSubtitles } = require("../scripts/media-text.js");
 
 const URL = "https://x.com/example/status/1234567890";
 const BODY = "Use small notes and connect related ideas. Keep an independent backup of your vault.";
@@ -248,22 +248,42 @@ test("saves only the target post and passes OCR and video text into Ollama", asy
     respond(IMAGE, () => new Response(Buffer.from("89504e470d0a1a0a", "hex"), { headers: { "content-type": "image/png" } }));
     respond(VIDEO + "?quality=hd", () => new Response(null, { status: 503 }));
     respond(VIDEO, () => new Response(Buffer.from("00000018667479706d703432", "hex"), { headers: { "content-type": "video/mp4" } }));
-    const analysis = async (_, files) => files.map(file => file.endsWith(".mp4")
-      ? { file, kind: "video", status: "ok", segments: [{ at: "01:05", text: "The video explains calibration." }] }
-      : { file, kind: "image", status: "ok", text: "Calibrate the camera." });
+    const analysis = async (_, files) => files.flatMap(file => file.endsWith(".mp4") ? [
+      { file, kind: "video", status: "ok", segments: [{ at: "01:05", text: "The video explains calibration." }] },
+      { file, kind: "screen", status: "partial", interval: 500, reason: "Missing frames.",
+        segments: [{ at: "01:05.5-01:08", text: "Reference marker" }] },
+      { file, kind: "captions", status: "ok", language: "eng",
+        segments: [{ at: "01:05.25-01:08", text: "Caption track text." }] },
+    ] : [{ file, kind: "image", status: "ok", text: "Calibrate the camera." }]);
     const result = await capture({ ...args, url: URL, summarize: true }, analysis);
     const note = fs.readFileSync(path.join(vault, result.note), "utf8");
     assert.equal(result.status, "saved");
     assert.equal(result.attachmentCount, 2);
     assert.equal(result.imageTextCount, 1);
     assert.equal(result.transcriptCount, 1);
+    assert.equal(result.videoOcrCount, 1);
+    assert.equal(result.subtitleCount, 1);
+    assert.equal(result.mediaTextMissing, 1);
     assert.match(note, /## Video Transcripts[\s\S]*01:05[\s\S]*The video explains calibration\./);
     assert.doesNotMatch(note, /Quote body|Conversation Context/);
     assert.ok(!requests.some(r => /conversation|quoted.jpg/.test(r.url)));
     const prompt = JSON.parse(requests.find(r => r.url.endsWith("/api/chat")).options.body).messages[1].content;
     assert.match(prompt, /Calibrate the camera/);
     assert.match(prompt, /The video explains calibration/);
+    assert.match(prompt, /Video on-screen OCR [^\n]*partial coverage[\s\S]*Reference marker/);
+    assert.match(prompt, /Embedded video subtitles [^\n]*language eng[\s\S]*Caption track text/);
     assert.match(note, /https:\/\/example\.org\/linked/);
+    assert.match(note, /## Video On-Screen Text \(OCR\)[\s\S]*Partial OCR:[\s\S]*01:05\.5-01:08[\s\S]*Reference marker/);
+    assert.match(note, /## Video Subtitle Tracks[\s\S]*eng[\s\S]*Caption track text/);
+    const filepath = path.join(vault, result.note);
+    const v3 = note.replace(/^archive_version: 4$/m, "archive_version: 3")
+      .replace(/^(?:videos_with_screen_text|subtitle_tracks_saved): \d+\n/gm, "")
+      .replace(/## Video On-Screen Text[\s\S]*?(?=## Engagement|## Metadata)/, "");
+    fs.writeFileSync(filepath, v3);
+    const migrated = await capture({ ...args, url: URL }, analysis);
+    assert.equal(migrated.archiveVersion, 4);
+    assert.equal(migrated.videoOcrCount, 1);
+    assert.equal(migrated.note, result.note);
   });
 });
 
@@ -285,13 +305,13 @@ test("first re-save removes legacy conversation, retains the backup and keeps My
   await withVault(async ({ vault, args }) => {
     const first = await capture({ ...args, url: URL });
     const filepath = path.join(vault, first.note);
-    const old = fs.readFileSync(filepath, "utf8").replace(/^archive_version: 3\n/m, "archive_version: 2\ncontext_posts: 1\n")
+    const old = fs.readFileSync(filepath, "utf8").replace(/^archive_version: 4\n/m, "archive_version: 2\ncontext_posts: 1\n")
       .replace("## Metadata", "## Conversation Context\n\nOld context\n\n![[X/Attachments/1234567890/" + "a".repeat(24) + ".mp4]]\n\n## Metadata")
       .replace(/## My Notes[\s\S]*$/, "## My Notes\n\nMy notes stay here.\n");
     fs.writeFileSync(filepath, old);
     const upgraded = await capture({ ...args, url: URL });
     assert.equal(upgraded.note, first.note);
-    assert.equal(upgraded.archiveVersion, 3);
+    assert.equal(upgraded.archiveVersion, 4);
     const upgradedNote = fs.readFileSync(filepath, "utf8");
     assert.match(upgradedNote, /My notes stay here\./);
     assert.doesNotMatch(upgradedNote, /Old context|Conversation Context/);
@@ -306,6 +326,27 @@ test("Whisper output uses timestamped text and skips non-speech placeholders", (
     { offsets: { from: 65000 }, text: " Camera   calibration. " },
   ] }), [{ at: "01:05", text: "Camera calibration." }]);
   assert.throws(() => parseTranscript({}), /Invalid Whisper JSON/);
+});
+
+test("merges repeated lines while keeping changed numbers and text that reappears later", () => {
+  const labels = ["Persistent title\nDistance 3.5", "Persistent title.\nDistance 35", "Persistent title",
+    "Persistent title", "Persistent title", "Persistent title\nDistance 3.5"];
+  const merged = mergeScreenFrames(labels.map((text, i) => ({ at: i * 500, text })), 500, 2750);
+  assert.deepEqual(merged, [
+    { at: "00:00-00:02.75", text: "Persistent title" },
+    { at: "00:00-00:00.5", text: "Distance 3.5" },
+    { at: "00:00.5-00:01", text: "Distance 35" },
+    { at: "00:02.5-00:02.75", text: "Distance 3.5" },
+  ]);
+});
+
+test("retains subtitle ranges, line text and punctuation", () => {
+  const srt = "1\r\n00:00:01,500 --> 00:00:03,025\r\n<i>Say</i> hello.\r\nNext line.\r\n\r\n"
+    + "2\r\n00:01:03,000 --> 00:01:04,100\r\n你好。";
+  assert.deepEqual(parseSubtitles(srt), [
+    { at: "00:01.5-00:03.025", text: "Say hello. Next line." },
+    { at: "01:03-01:04.1", text: "你好。" },
+  ]);
 });
 
 test("keeps the note when an extraction retries with less text", async () => {

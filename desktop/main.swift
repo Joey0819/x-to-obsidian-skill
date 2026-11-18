@@ -28,7 +28,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         buildWindow()
         if CommandLine.arguments.contains("--check-ui") {
-            detailLabel.stringValue = "7 attachments · 6 images with text · 1 transcript · 1 unavailable\nX/Tweets/example.md"
+            detailLabel.stringValue = "7 attachments · 6 image OCR · 1 speech · 1 video OCR · 1 subtitle track · 1 gap\nX/Tweets/example.md"
             window.contentView!.layoutSubtreeIfNeeded()
             let frame = detailLabel.convert(detailLabel.bounds, to: window.contentView!)
             let fits = frame.minY >= 12 && frame.maxX <= window.contentView!.bounds.width - 12
@@ -246,6 +246,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             let missing = result["attachmentMissing"] as? Int ?? 0
             let imageText = result["imageTextCount"] as? Int ?? 0
             let transcripts = result["transcriptCount"] as? Int ?? 0
+            let videoOcr = result["videoOcrCount"] as? Int ?? 0
+            let subtitles = result["subtitleCount"] as? Int ?? 0
             let extractionMissing = result["mediaTextMissing"] as? Int ?? 0
             let partial = missing > 0 || extractionMissing > 0
             statusLabel.textColor = partial ? .systemOrange : .systemGreen
@@ -253,8 +255,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 : requestedSummary && result["hasSummary"] as? Bool != true
                 ? "正文已保存；摘要未生成 / Saved; summary unavailable"
                 : (result["opened"] as? Bool == true ? "已保存并打开 Obsidian / Saved and opened in Obsidian" : "已保存 / Saved")
-            detailLabel.stringValue = "\(attachments) attachments · \(imageText) images with text · \(transcripts) transcripts" +
-                (missing + extractionMissing > 0 ? " · \(missing + extractionMissing) unavailable" : "") +
+            detailLabel.stringValue = "\(attachments) attachments · \(imageText) image OCR · \(transcripts) speech · \(videoOcr) video OCR" +
+                (subtitles > 0 ? " · \(subtitles) subtitle tracks" : "") +
+                (missing + extractionMissing > 0 ? " · \(missing + extractionMissing) gaps" : "") +
                 "\n" + (result["note"] as? String ?? "")
         case "incomplete":
             statusLabel.textColor = .systemOrange
