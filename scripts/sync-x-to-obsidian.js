@@ -5,9 +5,10 @@ const fs = require("fs");
 const path = require("path");
 const os = require("os");
 const { execFileSync } = require("child_process");
+const { randomUUID } = require("node:crypto");
 const { archiveMedia, mediaReference, safeHttps } = require("./media-archive.js");
 const { extractMediaText } = require("./media-text.js");
-const { resolveVaultRoot, openSavedNote } = require("./obsidian-vault.js");
+const { resolveSaveDestination, openSavedNote } = require("./obsidian-vault.js");
 
 const ARCHIVE_VERSION = 4;
 const MEDIA_TEXT_KINDS = {
@@ -112,7 +113,7 @@ Options:
   --refresh-incomplete
                   Re-fetch saved URL-only or preview-only notes.
   --model MODEL   Ollama model for --summarize. Default: ${DEFAULT_MODEL}
-  --vault PATH    Obsidian vault path. Default: ${DEFAULT_VAULT}`);
+  --vault PATH    Existing vault or destination folder inside it. Default: ${DEFAULT_VAULT}`);
 }
 
 function runAppleScript(script) {
@@ -698,7 +699,13 @@ function loadIndex(vault) {
 }
 
 function saveIndex(index) {
-  fs.writeFileSync(index.path, `${JSON.stringify(index.data, null, 2)}\n`);
+  const temporary = `${index.path}.${randomUUID()}.tmp`;
+  try {
+    fs.writeFileSync(temporary, `${JSON.stringify(index.data, null, 2)}\n`, { flag: "wx" });
+    fs.renameSync(temporary, index.path);
+  } finally {
+    fs.rmSync(temporary, { force: true });
+  }
 }
 
 function safeFileName(value) {
@@ -948,7 +955,14 @@ function buildNote(tweet, summary, myNotes, capturedAt = new Date().toISOString(
   return lines.filter((line) => line !== null).join("\n").replace(/\n{3,}/g, "\n\n") + "\n";
 }
 
-function appendInbox(vault, tweet, relativePath) {
+function inboxLink(relativePath) {
+  if (!/[\[\]|#^]/.test(relativePath)) return `[[${relativePath.replace(/\.md$/, "")}]]`;
+  const target = path.relative(path.join("X", "Inbox"), relativePath)
+    .split(path.sep).map(part => encodeURIComponent(part).replace(/[()]/g, value => value === "(" ? "%28" : "%29")).join("/");
+  return `[Open note](${target})`;
+}
+
+function updateInbox(vault, tweet, relativePath, previousPath) {
   const inboxPath = path.join(vault, "X", "Inbox", "X Inbox.md");
   if (!fs.existsSync(inboxPath)) {
     fs.writeFileSync(
@@ -962,10 +976,19 @@ function appendInbox(vault, tweet, relativePath) {
     );
   }
   const existing = fs.readFileSync(inboxPath, "utf8");
-  if (existing.includes(tweet.id)) return;
+  const noteLink = inboxLink(relativePath);
+  const postLink = `[${tweet.id}](`;
+  if (existing.includes(postLink)) {
+    if (previousPath && previousPath !== relativePath) {
+      const previousLink = inboxLink(previousPath);
+      const updated = existing.split("\n").map(line =>
+        line.startsWith("|") && line.includes(postLink) ? line.replace(previousLink, () => noteLink) : line).join("\n");
+      if (updated !== existing) fs.writeFileSync(inboxPath, updated);
+    }
+    return;
+  }
   const captured = new Date().toISOString().slice(0, 19).replace("T", " ");
-  const noteLink = relativePath.replace(/\.md$/, "");
-  const row = `| ${captured} | @${tweet.handle} | [${tweet.id}](${tweet.url}) | [[${noteLink}]] |`;
+  const row = `| ${captured} | @${tweet.handle} | [${tweet.id}](${tweet.url}) | ${noteLink} |`;
   fs.appendFileSync(inboxPath, `${row}\n`);
 }
 
@@ -990,17 +1013,50 @@ function isUrlOnlyOriginalPost(markdown) {
 
 function incompleteNoteUrls(vault) {
   const tweetsDir = path.join(vault, "X", "Tweets");
-  if (!fs.existsSync(tweetsDir)) return [];
-  const urls = [];
-  for (const entry of fs.readdirSync(tweetsDir)) {
-    if (!entry.endsWith(".md")) continue;
-    const fullPath = path.join(tweetsDir, entry);
+  const notes = new Set(Object.values(loadIndex(vault).data.tweets).map(entry => entry.file).filter(Boolean));
+  if (fs.existsSync(tweetsDir)) {
+    for (const entry of fs.readdirSync(tweetsDir)) notes.add(path.join("X", "Tweets", entry));
+  }
+  const urls = new Set();
+  for (const entry of notes) {
+    const fullPath = path.join(vault, entry);
+    if (!entry.endsWith(".md") || !fs.existsSync(fullPath)) continue;
     const markdown = fs.readFileSync(fullPath, "utf8");
     if (existingContentStatus(markdown) === "complete") continue;
     const sourceUrl = sourceUrlFromMarkdown(markdown);
-    if (sourceUrl) urls.push(sourceUrl);
+    if (sourceUrl) urls.add(sourceUrl);
   }
-  return urls;
+  return [...urls];
+}
+
+function saveNoteAtDestination(vault, index, id, entry, previousPath, markdown) {
+  const destination = path.join(vault, entry.file);
+  const replacing = previousPath === destination;
+  const previousEntry = index.data.tweets[id];
+  try {
+    if (markdown === undefined) fs.copyFileSync(previousPath, destination, fs.constants.COPYFILE_EXCL);
+    else fs.writeFileSync(destination, markdown, { flag: replacing ? "w" : "wx" });
+  } catch (error) {
+    if (error.code === "EEXIST") throw new Error(`A note already exists at ${entry.file}; nothing was overwritten.`);
+    throw error;
+  }
+  index.data.tweets[id] = entry;
+  try {
+    saveIndex(index);
+  } catch (error) {
+    if (!replacing) fs.unlinkSync(destination);
+    throw error;
+  }
+  if (previousPath && !replacing) {
+    try {
+      fs.unlinkSync(previousPath);
+    } catch (error) {
+      index.data.tweets[id] = previousEntry;
+      saveIndex(index);
+      fs.unlinkSync(destination);
+      throw error;
+    }
+  }
 }
 
 async function syncOne(url, args, readMedia = extractMediaText) {
@@ -1011,10 +1067,17 @@ async function syncOne(url, args, readMedia = extractMediaText) {
   const existing = index.data.tweets[id];
   const existingPath = existing && existing.file ? path.join(args.vault, existing.file) : "";
   const existingMarkdown = existingPath && fs.existsSync(existingPath) ? fs.readFileSync(existingPath, "utf8") : "";
+  const selectedPath = args.folder && existing?.file ? path.join(args.folder, path.basename(existing.file)) : "";
   const previousArchive = archiveDetails(existingMarkdown);
   const needsVideoUpgrade = previousArchive.archiveVersion === 3 && /!\[\[X\/Attachments\/\d+\/[\da-f]{24}\.mp4\]\]/i.test(existingMarkdown);
   const refresh = args.refresh || (existingMarkdown && (previousArchive.archiveVersion < 3 || needsVideoUpgrade));
   if (existingMarkdown && !refresh) {
+    if (selectedPath && selectedPath !== existing.file) {
+      saveNoteAtDestination(args.vault, index, id, { ...existing, file: selectedPath }, existingPath);
+      updateInbox(args.vault, { id, url: normalized, handle: existing.handle || parseTweetUrl(normalized).handle }, selectedPath, existing.file);
+      console.log(`Moved existing capture: ${selectedPath}`);
+      return selectedPath;
+    }
     console.log(`Already synced: ${existing.file}`);
     return existing.file;
   }
@@ -1057,18 +1120,16 @@ async function syncOne(url, args, readMedia = extractMediaText) {
   for (const warning of tweet.fetchWarnings || []) console.warn(`Source warning: ${warning}`);
   const datePart = tweet.postedAt || new Date().toISOString().slice(0, 10);
   const fileName = `${datePart} ${safeFileName(tweet.authorName)} ${tweet.id}.md`;
-  const relativePath = existing && existing.file ? existing.file : path.join("X", "Tweets", fileName);
-  const absolutePath = path.join(args.vault, relativePath);
+  const relativePath = selectedPath || (args.folder
+    ? path.join(args.folder, fileName) : existing?.file || path.join("X", "Tweets", fileName));
   const capturedAt = existing && existing.captured_at ? existing.captured_at : new Date().toISOString();
   if (existingMarkdown) {
-    if (fs.readFileSync(absolutePath, "utf8") !== existingMarkdown) throw new Error("Note changed while processing; refresh again to preserve your edits.");
+    if (fs.readFileSync(existingPath, "utf8") !== existingMarkdown) throw new Error("Note changed while processing; refresh again to preserve your edits.");
     const backupDir = path.join(args.vault, "X", ".x-sync-backups");
     fs.mkdirSync(backupDir, { recursive: true });
     fs.writeFileSync(path.join(backupDir, `${id}-${Date.now()}.md`), existingMarkdown, { flag: "wx" });
   }
-  fs.writeFileSync(absolutePath, buildNote(tweet, summary, extractMyNotes(existingMarkdown), capturedAt, archive, mediaText));
-
-  index.data.tweets[tweet.id] = {
+  const entry = {
     url: tweet.url,
     file: relativePath,
     author: tweet.authorName,
@@ -1079,8 +1140,9 @@ async function syncOne(url, args, readMedia = extractMediaText) {
     captured_at: capturedAt,
     refreshed_at: refresh ? new Date().toISOString() : "",
   };
-  saveIndex(index);
-  appendInbox(args.vault, tweet, relativePath);
+  saveNoteAtDestination(args.vault, index, id, entry, existingMarkdown ? existingPath : "",
+    buildNote(tweet, summary, extractMyNotes(existingMarkdown), capturedAt, archive, mediaText));
+  updateInbox(args.vault, tweet, relativePath, existing?.file);
 
   console.log(`${refresh ? "Refreshed" : "Synced"}: ${relativePath} (${archive.saved.size} attachments, ${counts.imageTextCount} image OCR, ${counts.transcriptCount} speech, ${counts.videoOcrCount} video OCR, ${counts.subtitleCount} subtitle tracks)`);
   if (contentStatus(tweet) === "incomplete") {
@@ -1091,7 +1153,9 @@ async function syncOne(url, args, readMedia = extractMediaText) {
 
 async function main() {
   const args = parseArgs(process.argv);
-  args.vault = resolveVaultRoot(args.vault);
+  const destination = resolveSaveDestination(args.vault);
+  args.vault = destination.vault;
+  args.folder = args.refreshIncomplete ? "" : destination.folder;
   const urls = [];
 
   if (args.refreshIncomplete) {

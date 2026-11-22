@@ -42,7 +42,7 @@ The bookmark requires the specific post's detail URL. It cannot choose a post fr
 
 macOS may request Documents access when the vault is in Documents, including after a rebuild. Approve it only for the intended app and vault. If it is not approved, the desktop app cannot save to that vault.
 
-Selecting a folder inside an existing vault resolves to that vault's root. Automatic opening uses the note's absolute path and requires the vault to have been opened in Obsidian at least once. If the handoff is unavailable, the app reports where the note was saved.
+Selecting a folder inside an existing vault saves the note directly there. The enclosing vault remains the home for attachments, X Inbox and the capture index. Selecting the vault root uses `X/Tweets/` for new notes and leaves existing notes in place. Automatic opening uses the note's absolute path and requires the vault to have been opened in Obsidian at least once.
 
 Apple Vision is bundled for OCR. Video OCR and embedded subtitle extraction need FFmpeg; speech additionally needs whisper.cpp and its model (`brew install ffmpeg whisper.cpp`, then `bash scripts/setup-local-transcription.sh` once). The multilingual model is verified by SHA-256 and stored in `~/Library/Application Support/X to Obsidian/Models/`, outside the vault and the Git checkout. The app locates Homebrew binaries without relying on a Terminal session.
 

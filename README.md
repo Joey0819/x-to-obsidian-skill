@@ -12,7 +12,7 @@ Save public X/Twitter posts and X Articles as readable Obsidian Markdown for loc
 
 打开应用 → 设置一次浏览器书签 → 在 X 帖子页点击“保存到 Obsidian”。之后无需在终端输入命令。也可在应用中直接粘贴帖子链接，或选择“当前 Chrome 帖子”。
 
-The app lets you choose an existing vault, enable a local Ollama summary, and refresh saved content. Selecting a folder inside a vault saves to that vault's root. Open the vault in Obsidian at least once to enable automatic opening; a saved note is kept even when opening is unavailable. Incomplete saved notes are retried automatically. The bookmark sends only the current post URL; it does not read account cookies or synchronize every X bookmark.
+Use **Choose Save Folder** to pick where the note goes. Selecting a folder inside a vault saves the note directly in that folder. Selecting the vault itself puts new notes in `X/Tweets/`. Saving an indexed post to a different subfolder moves the existing note and updates X Inbox without creating a duplicate or overwriting a file already there. Open the vault in Obsidian at least once to enable automatic opening. The bookmark uses your saved folder and sends only the current post URL.
 
 应用可以选择仓库、开启本地摘要、刷新已有内容；已有不完整笔记会自动重试。浏览器书签只发送当前帖子链接，不读取账号 Cookie，也不自动同步全部收藏。
 
@@ -59,7 +59,7 @@ The primary UI is a native macOS app plus a browser bookmark. It supports direct
 
 ## Output and Limits / 输出与边界
 
-Notes go to `X/Tweets/`; offline attachments go to `X/Attachments/<post-id>/`. The note embeds the selected post's photos, article cover and inline images, and supported X-hosted videos/GIFs. It does not import quoted-post bodies, threads, or replies. Unsupported, oversized, or unavailable media keep a source link instead. Vault sync to another device must include the attachment folder as well as the notes.
+Notes go to the selected folder or default `X/Tweets/`; offline attachments always go to the vault's `X/Attachments/<post-id>/`. The note embeds the selected post's photos, article cover and inline images, and supported X-hosted videos/GIFs. It does not import quoted-post bodies, threads, or replies. Unsupported, oversized, or unavailable media keep a source link instead. Vault sync to another device must include the attachment folder as well as the notes.
 
 Extraction stays in the same note: **Image Text (OCR)** for still images and the first frame of an animated GIF, **Video Transcripts** for speech, **Video On-Screen Text (OCR)** for titles and burned-in subtitles, and **Video Subtitle Tracks** for text tracks actually embedded in the MP4. FFmpeg samples the clip and Apple Vision reads the frames, even on silent videos. Repeated lines are merged into approximate time ranges. The sampler checks every 0.5 seconds on typical clips and widens the interval on long clips to stay within 1,200 frames. Brief, small, or blurred text can be missed. Captions served separately by X are not downloaded. Local summaries receive all extracted sections, with overlapping speech and captions treated as the same content.
 

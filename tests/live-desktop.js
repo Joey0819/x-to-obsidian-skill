@@ -16,7 +16,7 @@ async function main() {
   const handler = execFileSync("/usr/bin/xcrun", ["swift", path.join(__dirname, "native", "check-handler.swift")], { encoding: "utf8" }).trim();
   assert.equal(handler, app, "The installed app must be the registered URL handler before testing");
   const vault = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "x2obsidian-desktop-")));
-  const selected = path.join(vault, "UI repo");
+  const selected = path.join(vault, "AI agent");
   fs.mkdirSync(path.join(vault, ".obsidian"));
   fs.mkdirSync(selected);
   const resultFile = path.join(os.homedir(), "Library", "Logs", "X to Obsidian", "last-result.json");
@@ -40,6 +40,8 @@ async function main() {
     }
     assert.equal(result?.status, "saved", JSON.stringify(result));
     assert.equal(result.vault, vault);
+    assert.equal(result.destination, selected);
+    assert.equal(path.dirname(result.note), path.basename(selected));
     assert.ok(!fs.existsSync(path.join(selected, "X")));
     const note = fs.readFileSync(path.join(vault, result.note), "utf8");
     const embeds = [...new Set([...note.matchAll(/!\[\[(X\/Attachments\/[^\]]+)\]\]/g)].map(match => match[1]))];

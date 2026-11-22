@@ -3,11 +3,11 @@
 
 const fs = require("node:fs");
 const path = require("node:path");
-const { resolveVaultRoot, openSavedNote } = require("./obsidian-vault.js");
+const { resolveSaveDestination, openSavedNote } = require("./obsidian-vault.js");
 const { parseArgs, syncOne, normalizeXUrl, existingContentStatus, archiveDetails, currentXUrlsFromChrome } = require("./sync-x-to-obsidian.js");
 
 async function capture(args, readMedia) {
-  const vault = resolveVaultRoot(args.vault);
+  const { vault, directory, folder } = resolveSaveDestination(args.vault);
   let url = args.url;
   if (!url && args.current) {
     const tabs = currentXUrlsFromChrome();
@@ -25,7 +25,7 @@ async function capture(args, readMedia) {
     const oldNote = fs.readFileSync(path.join(vault, entry.file), "utf8");
     refresh ||= existingContentStatus(oldNote) === "incomplete" || (args.summarize && !oldNote.includes("## Local AI Summary"));
   }
-  const relative = await syncOne(url, { ...args, vault, url, refresh }, readMedia);
+  const relative = await syncOne(url, { ...args, vault, folder, url, refresh }, readMedia);
   const note = fs.readFileSync(path.join(vault, relative), "utf8");
   const handoff = args.open ? openSavedNote(vault, relative) : { opened: false };
   return {
@@ -35,6 +35,7 @@ async function capture(args, readMedia) {
     ...archiveDetails(note),
     ...handoff,
     vault,
+    destination: directory,
   };
 }
 

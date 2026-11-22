@@ -178,13 +178,15 @@ test("article atomic entities use their DraftJS key rather than array position",
   assert.equal(markdown, "```\nexample code\n```");
 });
 
-test("desktop saves a selected vault subfolder into the vault root", async () => {
+test("desktop saves directly in the selected subfolder but opens using the real vault", async () => {
   await withVault(async ({ vault, args }) => {
     const selected = path.join(vault, "UI repo", "Nested folder");
     fs.mkdirSync(selected, { recursive: true });
     const result = await capture({ ...args, url: URL, vault: selected, open: true });
     assert.equal(result.status, "saved");
     assert.equal(result.vault, vault);
+    assert.equal(result.destination, selected);
+    assert.equal(path.dirname(result.note), path.relative(vault, selected));
     assert.ok(fs.existsSync(path.join(vault, result.note)));
     assert.ok(!fs.existsSync(path.join(selected, "X")));
     assert.equal(result.opened, false, "a local vault folder not added to Obsidian must not raise a popup");
@@ -192,6 +194,55 @@ test("desktop saves a selected vault subfolder into the vault root", async () =>
   });
 });
 
+test("re-saving into a chosen folder moves an indexed note and keeps all text", async () => {
+  await withVault(async ({ vault, args, requests }) => {
+    const first = await capture({ ...args, url: URL, summarize: true });
+    const oldPath = path.join(vault, first.note);
+    fs.appendFileSync(oldPath, "\nA personal note.\n");
+    const old = fs.readFileSync(oldPath, "utf8");
+    const destination = path.join(vault, "AI agent");
+    fs.mkdirSync(destination);
+    const requestCount = requests.length;
+    const moved = await capture({ ...args, vault: destination, url: URL, summarize: true });
+    assert.equal(moved.note, path.join("AI agent", path.basename(first.note)));
+    assert.equal(fs.readFileSync(path.join(vault, moved.note), "utf8"), old);
+    assert.ok(!fs.existsSync(oldPath));
+    assert.equal(requests.length, requestCount);
+    const index = JSON.parse(fs.readFileSync(path.join(vault, "X", ".x-sync-index.json"), "utf8"));
+    assert.equal(index.tweets["1234567890"].file, moved.note);
+    const inbox = fs.readFileSync(path.join(vault, "X", "Inbox", "X Inbox.md"), "utf8");
+    assert.ok(inbox.includes(`[[${moved.note.slice(0, -3)}]]`));
+    assert.ok(!inbox.includes(first.note.slice(0, -3)));
+    assert.equal((await capture({ ...args, url: URL })).note, moved.note, "root selection does not move an existing note");
+  });
+});
+
+test("a destination collision leaves both existing notes untouched", async () => {
+  await withVault(async ({ vault, args }) => {
+    const first = await capture({ ...args, url: URL });
+    const oldPath = path.join(vault, first.note);
+    const old = fs.readFileSync(oldPath, "utf8");
+    const destination = path.join(vault, "AI agent");
+    fs.mkdirSync(destination);
+    const occupied = path.join(destination, path.basename(first.note));
+    fs.writeFileSync(occupied, "Do not overwrite.");
+    await assert.rejects(capture({ ...args, vault: destination, url: URL }), /nothing was overwritten/);
+    assert.equal(fs.readFileSync(oldPath, "utf8"), old);
+    assert.equal(fs.readFileSync(occupied, "utf8"), "Do not overwrite.");
+    assert.equal((await capture({ ...args, url: URL })).note, first.note);
+  });
+});
+
+test("preview-only notes saved to a subfolder still appear in the refresh list", async () => {
+  await withVault(async ({ vault, args, setTweet }) => {
+    setTweet(articleTweet(false));
+    const destination = path.join(vault, "AI agent");
+    fs.mkdirSync(destination);
+    const result = await capture({ ...args, vault: destination, url: URL });
+    assert.equal(path.dirname(result.note), "AI agent");
+    assert.deepEqual(sync.incompleteNoteUrls(vault), [URL]);
+  });
+});
 test("resolver respects nested vault roots and rejects unrelated folders", async () => {
   await withVault(async ({ vault }) => {
     const nested = path.join(vault, "Nested vault");

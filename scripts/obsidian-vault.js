@@ -32,6 +32,16 @@ function resolveVaultRoot(selected, registered = registeredVaults()) {
   throw new Error("Choose an existing Obsidian vault folder / 请选择已有的 Obsidian 仓库。");
 }
 
+function resolveSaveDestination(selected) {
+  const vault = resolveVaultRoot(selected);
+  const directory = realDirectory(selected);
+  const folder = path.relative(vault, directory);
+  if (folder.split(path.sep).some(part => part.startsWith("."))) {
+    throw new Error("Choose a visible folder inside the vault / 请选择仓库内的普通文件夹。");
+  }
+  return { vault, directory, folder };
+}
+
 function openSavedNote(vault, relativePath, {
   platform = process.platform,
   registered = registeredVaults(),
@@ -59,4 +69,4 @@ function openSavedNote(vault, relativePath, {
   }
 }
 
-module.exports = { resolveVaultRoot, openSavedNote };
+module.exports = { resolveVaultRoot, resolveSaveDestination, openSavedNote };

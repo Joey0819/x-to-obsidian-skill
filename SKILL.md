@@ -12,7 +12,7 @@ Capture the actual post or article content into Markdown so the user's local LLM
 For a user who wants a direct X-to-Obsidian action, use the bundled macOS companion app and bookmark. Do the build/install work yourself; do not ask the user to type routine commands.
 
 - Check `~/Applications/X to Obsidian.app`. For initial setup or a source update, run `node scripts/build-macos.js --install` from this skill folder. This builds and installs the actual native app; Node.js and the Xcode command line tools must be present for the build. The installed app needs Node.js, but not a running Codex session.
-- Open the app. It defaults to the existing `~/Documents/Obsidian Vault`; the user can choose another vault, paste a post link, or use **Current Chrome Post**. Optional local summary/model and refresh controls are in the app.
+- Open the app. **Choose Save Folder** accepts a vault root (new notes go to `X/Tweets/`) or an existing folder inside a vault (notes go directly there). Re-saving a post to a different subfolder moves the indexed note rather than duplicating it. Paste a post link or use **Current Chrome Post**. Optional local summary and refresh controls are in the app.
 - Open **Set Up Browser Button** in the app, or open `desktop/bookmark.html`. The user drags **Save to Obsidian** onto the browser bookmarks bar once. On an X post, clicking that bookmark sends only the post URL to the app, saves content, and opens Obsidian. The first browser-to-app handoff may show an Open App prompt.
 - Validate the installed app handoff as well as the importer. If browser-control tools are unavailable, distinguish automated bookmark checks from an actual click in the user's browser. Do not alter Chrome's bookmark files while Chrome is running to fake installation.
 
@@ -24,7 +24,7 @@ For packaging and developer checks, read [references/desktop.md](references/desk
 
 Resolve `scripts/` relative to this skill folder. Use Node.js 18+; no npm install or X API key is needed. The bundled importer uses X oEmbed, FxTwitter's third-party public-content endpoint, and a best-effort public X web fallback. These sources may change or return incomplete content.
 
-Use the user's explicit vault path. Otherwise check `X2OBSIDIAN_VAULT`, then `~/Documents/Obsidian Vault`; ask for the destination only if it cannot be identified. The vault must already exist. Do not create a new vault implicitly.
+Use the user's explicit vault or save-folder path with `--vault`. Otherwise check `X2OBSIDIAN_VAULT`, then `~/Documents/Obsidian Vault`; ask for the destination only if it cannot be identified. The vault and selected folder must already exist.
 
 Prefer the explicit post URL supplied by the user:
 
@@ -62,7 +62,7 @@ Image OCR, timestamped video speech and on-screen text, and available embedded s
 ## Verify the Result / 验证结果
 
 - Read the generated file, not just the command's success message. Confirm real prose under `Original Post` or `Article Content`; report URL-only/preview-only results as incomplete. A failed refresh must not replace a good full-text note with weaker content.
-- Check `X/Tweets/`, the ID entry in `X/.x-sync-index.json`, and the link in `X/Inbox/X Inbox.md`. Repeating the same URL must not create another note or inbox row.
+- Check the selected folder (or default `X/Tweets/`), the ID entry in `X/.x-sync-index.json`, and the link in `X/Inbox/X Inbox.md`. Repeating the same URL must not create another note or inbox row.
 - Check that embeds under `X/Attachments/<post-id>/` resolve to local files and that OCR, speech and subtitle headings contain text or an explicit status. Sampled video OCR can miss brief or small text. X captions outside the downloaded file are not retrieved. Quoted posts, threads, and public replies are not imported.
 - Verify Obsidian rendering when app access is available. The importer does not build Copilot's index or send a Copilot chat message.
 - When summary integration is requested, verify an answer in Copilot using the freshly attached current note. A direct Ollama response proves model ability but does not prove Copilot context is fresh.

@@ -99,9 +99,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         vaultField.stringValue = ProcessInfo.processInfo.environment["X2OBSIDIAN_VAULT"]
             ?? settings.string(forKey: "vault")
             ?? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Documents/Obsidian Vault").path
-        let choose = NSButton(title: "选择仓库 / Choose Vault", target: self, action: #selector(chooseVault))
+        let choose = NSButton(title: "选择保存文件夹 / Choose Save Folder", target: self, action: #selector(chooseVault))
         choose.bezelStyle = .rounded
-        addField(label: "保存位置 / Obsidian vault", field: vaultField, to: stack)
+        addField(label: "保存位置 / Save folder", field: vaultField, to: stack)
         stack.addArrangedSubview(choose)
 
         summaryCheck.state = settings.bool(forKey: "summarize") ? .on : .off
@@ -162,7 +162,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         panel.canChooseFiles = false
         panel.allowsMultipleSelection = false
         panel.prompt = "选择 / Choose"
-        panel.message = "Choose an existing vault or a folder inside it. / 请选择现有仓库或其中的文件夹。"
+        panel.message = "Choose where the note goes. Choosing the vault itself uses X/Tweets. / 请选择笔记文件夹。选择仓库本身时，默认使用 X/Tweets。"
         if panel.runModal() == .OK, let url = panel.url {
             vaultField.stringValue = url.path
         }
@@ -237,10 +237,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         spinner.stopAnimation(nil)
         saveButton.isEnabled = true
         currentButton.isEnabled = true
-        if let resolvedVault = result["vault"] as? String, vaultField.stringValue == request.vault {
-            vaultField.stringValue = resolvedVault
+        if let destination = result["destination"] as? String, vaultField.stringValue == request.vault {
+            vaultField.stringValue = destination
             if ProcessInfo.processInfo.environment["X2OBSIDIAN_VAULT"] == nil {
-                settings.set(resolvedVault, forKey: "vault")
+                settings.set(destination, forKey: "vault")
             }
         }
         let openWarning = result["openWarning"] as? String
@@ -268,6 +268,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             statusLabel.textColor = .systemOrange
             statusLabel.stringValue = "仅获取链接或预览，未获取正文 / Content incomplete"
             detailLabel.stringValue = "来源可能受限，请稍后重试 / The public source may be restricted; retry later."
+                + ((result["note"] as? String).map { "\n" + $0 } ?? "")
                 + (openWarning.map { "\n" + $0 } ?? "")
         default:
             showError(result["message"] as? String ?? "Unable to save / 保存失败。")
